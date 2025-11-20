@@ -39,6 +39,9 @@ TELEGRAM_LOCAL_API_URL = os.getenv('TELEGRAM_LOCAL_API_URL')  # Опционал
 # Например: https://my-domain.com/upload
 VIDEO_WEBAPP_URL = os.getenv('VIDEO_WEBAPP_URL')  # Опционально
 
+# Путь к папке converted в webapp (для веб-доступа к сконвертированным видео)
+WEBAPP_CONVERTED_DIR = os.getenv('WEBAPP_CONVERTED_DIR', 'webapp/converted')  # Относительно корня проекта
+
 # Отладочное логирование для проверки значений
 if TELEGRAM_LOCAL_API_URL:
     logger.info(f"DEBUG: TELEGRAM_LOCAL_API_URL из .env: '{TELEGRAM_LOCAL_API_URL}'")
@@ -450,6 +453,22 @@ async def _process_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE
             # Проверяем размер результата перед отправкой
             output_size = os.path.getsize(output_path)
             logger.info(f"✅ Конвертация завершена: {output_size / 1024 / 1024:.2f}MB -> {output_path}")
+            
+            # Копируем сконвертированное видео в веб-доступную папку
+            if WEBAPP_CONVERTED_DIR:
+                try:
+                    import shutil
+                    webapp_converted_path = Path(WEBAPP_CONVERTED_DIR)
+                    webapp_converted_path.mkdir(parents=True, exist_ok=True)
+                    
+                    # Копируем файл с уникальным именем
+                    output_filename = os.path.basename(output_path)
+                    webapp_output_path = webapp_converted_path / output_filename
+                    shutil.copy2(output_path, webapp_output_path)
+                    
+                    logger.info(f"✅ Видео скопировано в веб-папку: {webapp_output_path}")
+                except Exception as copy_error:
+                    logger.warning(f"⚠️ Не удалось скопировать видео в веб-папку: {copy_error}")
             
             if output_size > MAX_UPLOAD_SIZE:
                 # Результат слишком большой для отправки

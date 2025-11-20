@@ -27,11 +27,14 @@ app = FastAPI(title="Video Upload WebApp")
 # Получаем настройки из переменных окружения
 PUBLIC_BASE_URL = os.getenv('PUBLIC_BASE_URL', 'https://example.com')
 VIDEOS_DIR = Path(os.getenv('VIDEOS_DIR', 'videos'))
+CONVERTED_DIR = Path(os.getenv('CONVERTED_DIR', 'converted'))  # Папка для сконвертированных видео
 PORT = int(os.getenv('WEBAPP_PORT', '8000'))
 
-# Создаем директорию для видео, если её нет
+# Создаем директории, если их нет
 VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
-logger.info(f"Директория для видео: {VIDEOS_DIR.absolute()}")
+CONVERTED_DIR.mkdir(parents=True, exist_ok=True)
+logger.info(f"Директория для загруженных видео: {VIDEOS_DIR.absolute()}")
+logger.info(f"Директория для сконвертированных видео: {CONVERTED_DIR.absolute()}")
 
 # Разрешенные расширения видео файлов
 ALLOWED_EXTENSIONS = {'.mp4', '.mov', '.avi', '.webm', '.mkv', '.flv', '.wmv', '.m4v', '.3gp'}
@@ -316,9 +319,12 @@ async def upload_form():
     <body>
             <div class="container">
             <h1>🎬 Загрузка видео</h1>
-            <div style="margin-bottom: 20px;">
+            <div style="margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap;">
                 <a href="/files" style="display: inline-block; padding: 10px 20px; background: var(--tg-theme-button-color, #3390ec); color: var(--tg-theme-button-text-color, #ffffff); text-decoration: none; border-radius: 8px; font-weight: 500;">
                     📁 Все файлы
+                </a>
+                <a href="/converted" style="display: inline-block; padding: 10px 20px; background: #28a745; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 500;">
+                    🎬 Сконвертированные
                 </a>
             </div>
             <form id="uploadForm" enctype="multipart/form-data">
@@ -558,6 +564,9 @@ async def upload_video(file: UploadFile = File(...)):
 @app.get("/videos/{filename}")
 async def get_video(filename: str):
     """
+    GET /videos/{filename} - отдает загруженное видео файл
+    """
+    """
     GET /videos/{filename} - отдает видео файл
     
     Args:
@@ -784,6 +793,7 @@ async def files_list():
             
             <div class="header-actions">
                 <a href="/upload" class="btn btn-primary">⬆️ Загрузить видео</a>
+                <a href="/files" class="btn btn-secondary">📁 Все файлы</a>
                 <button type="button" class="btn btn-secondary" onclick="loadVideosList()">🔄 Обновить</button>
             </div>
             
@@ -966,10 +976,403 @@ async def files_list():
     return HTMLResponse(content=html_template)
 
 
+@app.get("/converted", response_class=HTMLResponse)
+async def converted_list():
+    """
+    GET /converted - отображает HTML страницу со списком всех сконвертированных видео файлов
+    """
+    html_template = """
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Сконвертированные видео</title>
+        <script src="https://telegram.org/js/telegram-web-app.js"></script>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                background: var(--tg-theme-bg-color, #ffffff);
+                color: var(--tg-theme-text-color, #000000);
+                padding: 20px;
+            }
+            .container {
+                max-width: 800px;
+                margin: 0 auto;
+            }
+            h1 {
+                margin-bottom: 20px;
+                color: var(--tg-theme-text-color, #000000);
+            }
+            .header-actions {
+                display: flex;
+                gap: 10px;
+                margin-bottom: 20px;
+                flex-wrap: wrap;
+            }
+            .btn {
+                padding: 10px 20px;
+                border: none;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 14px;
+                text-decoration: none;
+                display: inline-block;
+                transition: opacity 0.3s;
+            }
+            .btn:hover {
+                opacity: 0.8;
+            }
+            .btn-primary {
+                background: var(--tg-theme-button-color, #3390ec);
+                color: var(--tg-theme-button-text-color, #ffffff);
+            }
+            .btn-secondary {
+                background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+                color: var(--tg-theme-text-color, #000000);
+            }
+            .video-item {
+                background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+                border-radius: 8px;
+                padding: 15px;
+                margin-bottom: 15px;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }
+            .video-item-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 10px;
+            }
+            .video-item-name {
+                font-weight: 500;
+                color: var(--tg-theme-text-color, #000000);
+                word-break: break-all;
+                flex: 1;
+            }
+            .video-item-size {
+                color: var(--tg-theme-hint-color, #999999);
+                font-size: 0.9em;
+            }
+            .video-item-date {
+                font-size: 0.85em;
+                color: var(--tg-theme-hint-color, #999999);
+            }
+            .video-item-url {
+                background: var(--tg-theme-bg-color, #ffffff);
+                padding: 10px;
+                border-radius: 6px;
+                word-break: break-all;
+                font-size: 0.9em;
+                color: var(--tg-theme-link-color, #3390ec);
+                border: 1px solid var(--tg-theme-hint-color, #e0e0e0);
+            }
+            .video-item-actions {
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+            .video-item-btn {
+                flex: 1;
+                min-width: 120px;
+                padding: 8px 16px;
+                border: none;
+                border-radius: 6px;
+                font-size: 14px;
+                cursor: pointer;
+                transition: opacity 0.3s;
+            }
+            .video-item-btn:hover {
+                opacity: 0.8;
+            }
+            .btn-copy {
+                background: var(--tg-theme-button-color, #3390ec);
+                color: var(--tg-theme-button-text-color, #ffffff);
+            }
+            .loading {
+                text-align: center;
+                padding: 40px;
+                color: var(--tg-theme-hint-color, #999999);
+            }
+            .empty-list {
+                text-align: center;
+                padding: 40px;
+                color: var(--tg-theme-hint-color, #999999);
+            }
+            .message {
+                padding: 12px;
+                border-radius: 6px;
+                margin-bottom: 15px;
+                display: none;
+            }
+            .message.show {
+                display: block;
+            }
+            .message.success {
+                background: #d4edda;
+                color: #155724;
+                border: 1px solid #c3e6cb;
+            }
+            .message.error {
+                background: #f8d7da;
+                color: #721c24;
+                border: 1px solid #f5c6cb;
+            }
+            .stats {
+                background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+                padding: 15px;
+                border-radius: 8px;
+                margin-bottom: 20px;
+                display: flex;
+                justify-content: space-around;
+                flex-wrap: wrap;
+                gap: 15px;
+            }
+            .stat-item {
+                text-align: center;
+            }
+            .stat-value {
+                font-size: 24px;
+                font-weight: bold;
+                color: var(--tg-theme-text-color, #000000);
+            }
+            .stat-label {
+                font-size: 12px;
+                color: var(--tg-theme-hint-color, #999999);
+                margin-top: 5px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🎬 Сконвертированные видео</h1>
+            
+            <div class="header-actions">
+                <a href="/upload" class="btn btn-primary">⬆️ Загрузить видео</a>
+                <a href="/files" class="btn btn-secondary">📁 Все файлы</a>
+                <button type="button" class="btn btn-secondary" onclick="loadVideosList()">🔄 Обновить</button>
+            </div>
+            
+            <div class="message" id="message"></div>
+            
+            <div class="stats" id="stats" style="display: none;">
+                <div class="stat-item">
+                    <div class="stat-value" id="totalFiles">0</div>
+                    <div class="stat-label">Всего файлов</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="totalSize">0 MB</div>
+                    <div class="stat-label">Общий размер</div>
+                </div>
+            </div>
+            
+            <div id="videosListContainer">
+                <div class="loading">Загрузка списка видео...</div>
+            </div>
+        </div>
+
+        <script>
+            const tg = window.Telegram.WebApp;
+            tg.ready();
+            tg.expand();
+
+            // Загрузка списка видео
+            async function loadVideosList() {
+                const container = document.getElementById('videosListContainer');
+                const message = document.getElementById('message');
+                const stats = document.getElementById('stats');
+                
+                container.innerHTML = '<div class="loading">Загрузка списка видео...</div>';
+                message.className = 'message';
+                stats.style.display = 'none';
+                
+                try {
+                    const response = await fetch('/api/converted');
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Ошибка при загрузке списка');
+                    }
+                    
+                    const videos = data.videos || [];
+                    
+                    if (videos.length === 0) {
+                        container.innerHTML = '<div class="empty-list">📭 Сконвертированных видео пока нет</div>';
+                        return;
+                    }
+                    
+                    // Подсчет статистики
+                    const totalSize = videos.reduce((sum, v) => sum + v.size, 0);
+                    const totalSizeMB = (totalSize / 1024 / 1024).toFixed(2);
+                    
+                    document.getElementById('totalFiles').textContent = videos.length;
+                    document.getElementById('totalSize').textContent = totalSizeMB + ' MB';
+                    stats.style.display = 'flex';
+                    
+                    // Формирование списка
+                    let html = '';
+                    videos.forEach(video => {
+                        const date = new Date(video.created_at);
+                        const dateStr = date.toLocaleString('ru-RU', {
+                            year: 'numeric',
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        });
+                        
+                        html += `
+                            <div class="video-item">
+                                <div class="video-item-header">
+                                    <div class="video-item-name">${escapeHtml(video.filename)}</div>
+                                    <div class="video-item-size">${video.size_mb} MB</div>
+                                </div>
+                                <div class="video-item-date">
+                                    📅 ${dateStr}
+                                </div>
+                                <div class="video-item-url" id="url-${escapeHtml(video.filename)}">
+                                    ${escapeHtml(video.url)}
+                                </div>
+                                <div class="video-item-actions">
+                                    <button type="button" class="video-item-btn btn-copy" onclick="copyVideoUrl('${escapeHtml(video.url)}', '${escapeHtml(video.filename)}')">
+                                        📋 Копировать ссылку
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    container.innerHTML = html;
+                } catch (error) {
+                    container.innerHTML = '';
+                    message.textContent = `Ошибка: ${escapeHtml(error.message)}`;
+                    message.className = 'message error show';
+                }
+            }
+
+            // Копирование ссылки на видео
+            async function copyVideoUrl(url, filename) {
+                try {
+                    await navigator.clipboard.writeText(url);
+                    showMessage(`✅ Ссылка на ${filename} скопирована!`, 'success');
+                } catch (error) {
+                    // Fallback для старых браузеров
+                    const textArea = document.createElement('textarea');
+                    textArea.value = url;
+                    textArea.style.position = 'fixed';
+                    textArea.style.opacity = '0';
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    try {
+                        document.execCommand('copy');
+                        showMessage(`✅ Ссылка на ${filename} скопирована!`, 'success');
+                    } catch (err) {
+                        showMessage('❌ Не удалось скопировать ссылку', 'error');
+                    }
+                    document.body.removeChild(textArea);
+                }
+            }
+
+            // Показать сообщение
+            function showMessage(text, type) {
+                const message = document.getElementById('message');
+                message.textContent = text;
+                message.className = `message ${type} show`;
+                
+                // Автоматически скрыть через 3 секунды
+                setTimeout(() => {
+                    message.className = 'message';
+                }, 3000);
+            }
+
+            // Экранирование HTML
+            function escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            // Загружаем список при загрузке страницы
+            loadVideosList();
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_template)
+
+
 @app.get("/health")
 async def health_check():
     """Проверка здоровья сервера"""
-    return {"status": "ok", "videos_dir": str(VIDEOS_DIR.absolute())}
+    return {
+        "status": "ok",
+        "videos_dir": str(VIDEOS_DIR.absolute()),
+        "converted_dir": str(CONVERTED_DIR.absolute())
+    }
+
+
+@app.get("/api/converted")
+async def list_converted():
+    """
+    GET /api/converted - возвращает список всех сконвертированных видео файлов
+    
+    Returns:
+        JSON с массивом сконвертированных видео файлов (имя, размер, дата создания, URL)
+    """
+    try:
+        videos = []
+        
+        # Получаем абсолютный путь к директории
+        if CONVERTED_DIR.is_absolute():
+            converted_path = CONVERTED_DIR
+        else:
+            converted_path = Path.cwd() / CONVERTED_DIR
+        
+        # Нормализуем путь
+        converted_path = converted_path.resolve()
+        
+        if not converted_path.exists():
+            logger.warning(f"Директория сконвертированных видео не существует: {converted_path}")
+            return JSONResponse(content={"videos": []})
+        
+        # Проходим по всем файлам в директории
+        for file_path in converted_path.iterdir():
+            if file_path.is_file() and is_video_file(file_path.name):
+                try:
+                    file_size = file_path.stat().st_size
+                    file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+                    
+                    video_url = f"{PUBLIC_BASE_URL}/converted/{file_path.name}"
+                    
+                    videos.append({
+                        "filename": file_path.name,
+                        "size": file_size,
+                        "size_mb": round(file_size / 1024 / 1024, 2),
+                        "created_at": file_mtime.isoformat(),
+                        "url": video_url
+                    })
+                except Exception as e:
+                    logger.warning(f"Ошибка при обработке файла {file_path.name}: {e}")
+                    continue
+        
+        # Сортируем по дате создания (новые первыми)
+        videos.sort(key=lambda x: x["created_at"], reverse=True)
+        
+        logger.info(f"Найдено сконвертированных видео файлов: {len(videos)}")
+        
+        return JSONResponse(content={"videos": videos})
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении списка сконвертированных видео: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка при получении списка сконвертированных видео: {str(e)}")
 
 
 @app.get("/api/videos")
@@ -1085,7 +1488,8 @@ async def delete_video(filename: str):
 if __name__ == "__main__":
     import uvicorn
     logger.info(f"🚀 Запуск сервера на порту {PORT}")
-    logger.info(f"📁 Директория для видео: {VIDEOS_DIR.absolute()}")
+    logger.info(f"📁 Директория для загруженных видео: {VIDEOS_DIR.absolute()}")
+    logger.info(f"📁 Директория для сконвертированных видео: {CONVERTED_DIR.absolute()}")
     logger.info(f"🌐 Публичный URL: {PUBLIC_BASE_URL}")
     uvicorn.run(app, host="0.0.0.0", port=PORT)
 
