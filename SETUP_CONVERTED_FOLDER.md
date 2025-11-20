@@ -42,37 +42,74 @@ WEBAPP_CONVERTED_DIR=webapp/converted
 
 ### 3. Обновите конфигурацию Nginx
 
-Добавьте секцию для раздачи файлов из папки `converted`:
+**ВАЖНО:** Если у вас ошибка `"location" directive is not allowed here`, см. файл `NGINX_CONFIG_FIX.md` для полной правильной конфигурации.
+
+Откройте файл конфигурации:
 
 ```bash
 sudo nano /etc/nginx/sites-available/video-upload
 ```
 
-Добавьте после секции `/videos/`:
+**Полная правильная конфигурация** (замените весь файл):
 
 ```nginx
+server {
+    listen 80;
+    server_name ваш-домен.com www.ваш-домен.com;
+
+    # Логи
+    access_log /var/log/nginx/video-upload-access.log;
+    error_log /var/log/nginx/video-upload-error.log;
+
+    # Максимальный размер загружаемого файла (2GB)
+    client_max_body_size 2G;
+    client_body_timeout 300s;
+
+    # Проксирование на backend
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Таймауты для больших файлов
+        proxy_connect_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+    }
+
+    # Раздача статических видео файлов (загруженные)
+    location /videos/ {
+        alias /root/WebConvert/webapp/videos/;
+        autoindex off;
+        add_header Content-Type video/mp4;
+        add_header Accept-Ranges bytes;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        add_header Access-Control-Allow-Origin *;
+        access_log off;
+    }
+
     # Раздача сконвертированных видео файлов
     location /converted/ {
         alias /root/WebConvert/webapp/converted/;
-
-        # ВАЖНО: Отключаем проверку индексов
         autoindex off;
-
-        # Заголовки для видео
         add_header Content-Type video/mp4;
         add_header Accept-Ranges bytes;
-
-        # Кэширование
         expires 30d;
         add_header Cache-Control "public, immutable";
-
-        # CORS
         add_header Access-Control-Allow-Origin *;
-
-        # Разрешаем доступ к файлам
         access_log off;
     }
+}
 ```
+
+**Важно:**
+
+- Замените `ваш-домен.com` на ваш реальный домен
+- Все директивы `location` должны быть **внутри** блока `server { }`
+- Если используете другого пользователя, замените `/root/WebConvert` на правильный путь
 
 **Важно:** Замените `/root/WebConvert/webapp/converted/` на правильный путь, если используете другого пользователя.
 
