@@ -22,6 +22,16 @@ FFMPEG_PATH = os.getenv('FFMPEG_PATH', 'ffmpeg')  # По умолчанию ищ
 if FFMPEG_PATH != 'ffmpeg':
     FFMPEG_PATH = os.path.expanduser(FFMPEG_PATH)
 
+# Настройки скорости конвертации
+# FFMPEG_PRESET: ultrafast, veryfast, faster, fast, medium, slow, slower, veryslow
+# Чем быстрее preset, тем быстрее конвертация, но больше размер файла
+FFMPEG_PRESET = os.getenv('FFMPEG_PRESET', 'veryfast')  # По умолчанию veryfast (баланс скорости и качества)
+
+# Hardware acceleration (аппаратное ускорение)
+# FFMPEG_HWACCEL: auto, nvenc, vaapi, videotoolbox, none
+# auto - автоматически определяет доступное ускорение
+FFMPEG_HWACCEL = os.getenv('FFMPEG_HWACCEL', 'auto').lower()
+
 # Определяем пути к ffmpeg и ffprobe
 def _get_ffmpeg_paths():
     """
@@ -52,6 +62,68 @@ def _get_ffmpeg_paths():
         ffprobe_path = shutil.which('ffprobe') or 'ffprobe'
     
     return ffmpeg_path, ffprobe_path
+
+
+def _detect_hardware_acceleration(ffmpeg_path: str) -> dict:
+    """
+    Определяет доступное аппаратное ускорение для FFmpeg
+    
+    Returns:
+        dict: {
+            'type': 'nvenc' | 'vaapi' | 'videotoolbox' | None,
+            'encoder': 'h264_nvenc' | 'h264_vaapi' | 'h264_videotoolbox' | None,
+            'available': bool
+        }
+    """
+    result = {
+        'type': None,
+        'encoder': None,
+        'available': False
+    }
+    
+    try:
+        # Проверяем доступные кодеки
+        check_cmd = [ffmpeg_path, '-hide_banner', '-encoders']
+        process = subprocess.run(
+            check_cmd,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        encoders_output = process.stdout + process.stderr
+        logger.debug(f"Доступные кодеки (первые 500 символов): {encoders_output[:500]}")
+        
+        # NVIDIA NVENC (для GPU NVIDIA)
+        if 'h264_nvenc' in encoders_output or 'hevc_nvenc' in encoders_output:
+            result['type'] = 'nvenc'
+            result['encoder'] = 'h264_nvenc'
+            result['available'] = True
+            logger.info("✅ Обнаружено аппаратное ускорение: NVIDIA NVENC")
+            return result
+        
+        # Intel/AMD VAAPI (для Linux с Intel/AMD GPU)
+        if 'h264_vaapi' in encoders_output:
+            result['type'] = 'vaapi'
+            result['encoder'] = 'h264_vaapi'
+            result['available'] = True
+            logger.info("✅ Обнаружено аппаратное ускорение: VAAPI")
+            return result
+        
+        # Apple VideoToolbox (для macOS)
+        if 'h264_videotoolbox' in encoders_output:
+            result['type'] = 'videotoolbox'
+            result['encoder'] = 'h264_videotoolbox'
+            result['available'] = True
+            logger.info("✅ Обнаружено аппаратное ускорение: VideoToolbox")
+            return result
+        
+        logger.info("ℹ️ Аппаратное ускорение не обнаружено, используется программное кодирование")
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось проверить аппаратное ускорение: {e}")
+    
+    return result
 
 
 async def convert_video_to_mp4(input_path: str, file_id: str) -> str:
@@ -246,20 +318,95 @@ def _convert_video_sync(input_path: str, output_path: str):
             # Просто масштабируем до нужного размера
             stream = ffmpeg.filter(stream, 'scale', target_width, target_height)
         
+        # Определяем аппаратное ускорение (если включено)
+        hw_accel = None
+        video_codec = 'libx264'
+        hw_output_options = {}
+        
+        logger.info(f"🔍 Настройки ускорения: FFMPEG_HWACCEL={FFMPEG_HWACCEL}, FFMPEG_PRESET={FFMPEG_PRESET}")
+        
+        if FFMPEG_HWACCEL != 'none':
+            hw_accel = _detect_hardware_acceleration(ffmpeg_path)
+            logger.info(f"🔍 Результат проверки ускорения: {hw_accel}")
+            
+            if FFMPEG_HWACCEL == 'auto' and hw_accel['available']:
+                video_codec = hw_accel['encoder']
+                logger.info(f"🚀 Используется аппаратное ускорение: {hw_accel['type']} (encoder: {hw_accel['encoder']})")
+            elif FFMPEG_HWACCEL == 'nvenc':
+                if hw_accel['type'] == 'nvenc':
+                    video_codec = 'h264_nvenc'
+                    logger.info("🚀 Используется NVIDIA NVENC")
+                else:
+                    logger.warning(f"⚠️ NVENC запрошен, но не найден. Доступно: {hw_accel}")
+            elif FFMPEG_HWACCEL == 'vaapi' and hw_accel['type'] == 'vaapi':
+                video_codec = 'h264_vaapi'
+                logger.info("🚀 Используется VAAPI")
+            elif FFMPEG_HWACCEL == 'videotoolbox' and hw_accel['type'] == 'videotoolbox':
+                video_codec = 'h264_videotoolbox'
+                logger.info("🚀 Используется VideoToolbox")
+            else:
+                logger.info(f"ℹ️ Аппаратное ускорение '{FFMPEG_HWACCEL}' недоступно, используется программное кодирование")
+        else:
+            logger.info("ℹ️ Аппаратное ускорение отключено (FFMPEG_HWACCEL=none), используется программное кодирование")
+        
+        # Настройки для аппаратного ускорения
+        if video_codec == 'h264_nvenc':
+            # NVIDIA NVENC настройки
+            hw_output_options = {
+                'preset': 'fast',  # fast, medium, slow для NVENC
+                'rc': 'vbr',  # Variable bitrate
+                'cq': '23',  # Constant quality (18-28, меньше = лучше качество)
+                'b:v': '5000k',  # Максимальный битрейт
+                'maxrate': '6000k',
+                'bufsize': '10000k',
+            }
+        elif video_codec == 'h264_vaapi':
+            # VAAPI настройки
+            hw_output_options = {
+                'qp': '23',  # Quality parameter (0-51, меньше = лучше)
+            }
+        elif video_codec == 'h264_videotoolbox':
+            # VideoToolbox настройки
+            hw_output_options = {
+                'allow_sw': '1',
+                'realtime': '1',
+                'b:v': '5000k',
+            }
+        else:
+            # Программное кодирование (libx264) - используем настройки из переменных окружения
+            hw_output_options = {
+                'preset': FFMPEG_PRESET,  # Настраиваемый preset для скорости
+                'tune': 'fastdecode',  # Оптимизация для быстрого декодирования
+            }
+        
         # Настраиваем выходной поток
         # Для больших файлов используем более быстрый preset и оптимизированные настройки
-        stream = ffmpeg.output(
-            stream,
-            output_path,
-            vcodec='libx264',
-            acodec='aac',
-            video_bitrate='5000k',
-            audio_bitrate='192k',
-            preset='fast',  # Изменено с 'medium' на 'fast' для ускорения конвертации больших файлов
-            movflags='faststart',  # Для быстрого воспроизведения в браузере
-            pix_fmt='yuv420p',  # Совместимость с большинством устройств
-            threads=0  # Использовать все доступные ядра процессора для ускорения
-        )
+        output_kwargs = {
+            'acodec': 'aac',
+            'audio_bitrate': '192k',
+            'movflags': 'faststart',  # Для быстрого воспроизведения в браузере
+            'pix_fmt': 'yuv420p',  # Совместимость с большинством устройств
+        }
+        
+        # Добавляем видеокодек
+        output_kwargs['vcodec'] = video_codec
+        
+        # Добавляем битрейт (если не указан в hw_output_options)
+        if 'b:v' not in hw_output_options and video_codec == 'libx264':
+            output_kwargs['video_bitrate'] = '5000k'
+        
+        # Добавляем настройки для программного кодирования
+        if video_codec == 'libx264':
+            output_kwargs['threads'] = 0  # Использовать все доступные ядра процессора
+            output_kwargs.update(hw_output_options)
+        else:
+            # Для аппаратного ускорения добавляем специфичные опции
+            output_kwargs.update(hw_output_options)
+        
+        stream = ffmpeg.output(stream, output_path, **output_kwargs)
+        
+        # Логируем используемые настройки
+        logger.info(f"⚙️ Настройки конвертации: codec={video_codec}, preset={FFMPEG_PRESET if video_codec == 'libx264' else hw_output_options.get('preset', 'N/A')}")
         
         # Запускаем конвертацию с отслеживанием прогресса
         # Используем subprocess для чтения stderr в реальном времени

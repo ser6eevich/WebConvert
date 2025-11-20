@@ -75,6 +75,8 @@ pip install -r requirements.txt
    TELEGRAM_PROXY_URL=  # Опционально: http://proxy.example.com:8080 (если Telegram заблокирован)
    TELEGRAM_LOCAL_API_URL=  # Опционально: http://localhost:8081 (если используется локальный Bot API сервер)
    FFMPEG_PATH=  # Опционально: C:\ffmpeg\bin\ffmpeg.exe (если FFmpeg не в PATH)
+   FFMPEG_PRESET=veryfast  # Опционально: ultrafast, veryfast, faster, fast, medium, slow (по умолчанию: veryfast)
+   FFMPEG_HWACCEL=auto  # Опционально: auto, nvenc, vaapi, videotoolbox, none (по умолчанию: auto)
    ```
 
    - `TELEGRAM_BOT_TOKEN` - токен вашего Telegram бота (получите у @BotFather)
@@ -84,6 +86,10 @@ pip install -r requirements.txt
    - `TELEGRAM_PROXY_URL` - (опционально) URL прокси-сервера, если Telegram заблокирован в вашем регионе
    - `TELEGRAM_LOCAL_API_URL` - (опционально) URL локального Bot API сервера (например: `http://localhost:8081`) для работы с файлами до 2GB
    - `FFMPEG_PATH` - (опционально) Полный путь к `ffmpeg.exe`, если FFmpeg не добавлен в PATH
+   - `FFMPEG_PRESET` - (опционально) Скорость конвертации: `ultrafast` (самый быстрый), `veryfast` (рекомендуется), `fast`, `medium`, `slow` (лучшее качество). По умолчанию: `veryfast`
+   - `FFMPEG_HWACCEL` - (опционально) Аппаратное ускорение: `auto` (автоопределение), `nvenc` (NVIDIA GPU), `vaapi` (Intel/AMD GPU), `videotoolbox` (macOS), `none` (только CPU). По умолчанию: `auto`
+
+   📖 **Подробная инструкция по оптимизации скорости конвертации:** См. файл [SPEED_OPTIMIZATION.md](SPEED_OPTIMIZATION.md)
 
 ## Запуск
 

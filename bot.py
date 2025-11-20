@@ -83,6 +83,10 @@ if not GPT_ASSISTANT_ID_VIDEOS:
 Path("downloads").mkdir(exist_ok=True)
 Path("converted").mkdir(exist_ok=True)
 
+# Словарь для отслеживания активных конвертаций
+# Ключ: (user_id, file_id), Значение: {'status_message': Message, 'file_path': str, 'output_path': str}
+active_conversions = {}
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
@@ -442,9 +446,58 @@ async def _process_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE
             else:
                 raise  # Пробрасываем другие ошибки
         
-        # Обновляем статус
-        await status_message.edit_text("🔄 Конвертирую видео в MP4 1920x1080...")
-        logger.info("🔄 Начинаю конвертацию через FFmpeg")
+        # Обновляем статус и запускаем конвертацию в фоне
+        await status_message.edit_text(
+            "🔄 Конвертирую видео в MP4 1920x1080...\n\n"
+            "⏳ Это может занять некоторое время.\n"
+            "💡 Вы можете продолжать пользоваться ботом - я уведомлю вас, когда конвертация завершится!"
+        )
+        logger.info("🔄 Начинаю конвертацию через FFmpeg в фоновом режиме")
+        
+        # Сохраняем информацию о конвертации
+        user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
+        conversion_key = (user_id, file_id)
+        active_conversions[conversion_key] = {
+            'status_message': status_message,
+            'file_path': file_path,
+            'chat_id': chat_id,
+            'user_id': user_id
+        }
+        
+        # Запускаем конвертацию в фоновой задаче
+        asyncio.create_task(
+            _convert_video_background(
+                file_path=file_path,
+                file_id=file_id,
+                user_id=user_id,
+                chat_id=chat_id,
+                status_message=status_message
+            )
+        )
+        
+        # Функция завершается здесь, бот может обрабатывать другие запросы
+        logger.info(f"✅ Конвертация запущена в фоне для пользователя {user_id}, файл {file_id}")
+    
+    except Exception as e:
+        logger.error(f"❌ Ошибка при обработке видео: {e}", exc_info=True)
+        try:
+            await update.message.reply_text(
+                f"❌ Произошла ошибка при обработке видео:\n{str(e)}\n\n"
+                "Попробуйте отправить видео еще раз."
+            )
+        except:
+            pass
+
+
+async def _convert_video_background(file_path: str, file_id: str, user_id: int, chat_id: int, status_message):
+    """
+    Фоновая задача для конвертации видео
+    Не блокирует работу бота
+    """
+    conversion_key = (user_id, file_id)
+    try:
+        logger.info(f"🎬 Начало фоновой конвертации: {file_path}")
         
         # Конвертируем видео
         output_path = await convert_video_to_mp4(file_path, file_id)
@@ -489,15 +542,26 @@ async def _process_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE
                     logger.info("🗑️ Временные файлы удалены")
                 except:
                     pass
+                # Удаляем из активных конвертаций
+                if conversion_key in active_conversions:
+                    del active_conversions[conversion_key]
                 return
             
             # Отправляем конвертированное видео
             await status_message.edit_text("✅ Видео успешно сконвертировано! Отправляю...")
             logger.info("📤 Начинаю отправку сконвертированного видео")
             
+            # Получаем бота из application (будет установлена в main)
+            app = globals().get('application')
+            if not app:
+                logger.error("❌ Application не доступна для отправки результата")
+                await status_message.edit_text("❌ Ошибка: не удалось отправить результат")
+                return
+            
             try:
                 with open(output_path, 'rb') as video_file:
-                    await update.message.reply_video(
+                    await app.bot.send_video(
+                        chat_id=chat_id,
                         video=video_file,
                         caption="✅ Видео сконвертировано в MP4 1920x1080"
                     )
@@ -516,7 +580,10 @@ async def _process_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE
                         f"2. Используйте локальный Bot API сервер для работы с большими файлами"
                     )
                 else:
-                    raise  # Пробрасываем другие ошибки
+                    await status_message.edit_text(
+                        f"❌ Ошибка при отправке видео:\n{str(send_error)}\n\n"
+                        f"Попробуйте отправить видео еще раз."
+                    )
             
             # Удаляем временные файлы
             try:
@@ -526,8 +593,6 @@ async def _process_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE
             except Exception as cleanup_error:
                 logger.warning(f"⚠️ Ошибка при удалении временных файлов: {cleanup_error}")
             
-            await status_message.delete()
-            
             # Отправляем кнопку меню после успешной конвертации
             keyboard = [
                 [
@@ -536,11 +601,16 @@ async def _process_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE
                 ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(
-                "✅ Готово! Что дальше?",
+            await app.bot.send_message(
+                chat_id=chat_id,
+                text="✅ Готово! Что дальше?",
                 reply_markup=reply_markup
             )
             logger.info("✅ Обработка видео завершена успешно")
+            
+            # Удаляем из активных конвертаций
+            if conversion_key in active_conversions:
+                del active_conversions[conversion_key]
         else:
             logger.error("❌ Не удалось сконвертировать видео")
             await status_message.edit_text(
@@ -560,6 +630,23 @@ async def _process_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE
             except:
                 pass
             
+            # Удаляем из активных конвертаций
+            if conversion_key in active_conversions:
+                del active_conversions[conversion_key]
+    except Exception as e:
+        logger.error(f"❌ Ошибка в фоновой конвертации: {e}", exc_info=True)
+        try:
+            await status_message.edit_text(
+                f"❌ Произошла ошибка при конвертации видео:\n{str(e)}\n\n"
+                "Попробуйте отправить видео еще раз."
+            )
+        except:
+            pass
+        
+        # Удаляем из активных конвертаций
+        if conversion_key in active_conversions:
+            del active_conversions[conversion_key]
+            
             # Отправляем кнопку меню даже при ошибке
             keyboard = [
                 [
@@ -568,11 +655,25 @@ async def _process_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE
                 ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text("Что дальше?", reply_markup=reply_markup)
+            app = globals().get('application')
+            if app:
+                await app.bot.send_message(
+                    chat_id=chat_id,
+                    text="Что дальше?",
+                    reply_markup=reply_markup
+                )
             
     except Exception as e:
         logger.error(f"❌ Критическая ошибка при обработке видео: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ Произошла ошибка при обработке видео: {str(e)}")
+        app = globals().get('application')
+        if app:
+            try:
+                await app.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"❌ Произошла ошибка при обработке видео: {str(e)}"
+                )
+            except:
+                pass
 
 
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -808,10 +909,40 @@ async def handle_video_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # Обновляем статус
-        await status_message.edit_text("🔄 Конвертирую видео в MP4 1920x1080...")
+        # Обновляем статус и запускаем конвертацию в фоне
+        await status_message.edit_text(
+            "🔄 Конвертирую видео в MP4 1920x1080...\n\n"
+            "⏳ Это может занять некоторое время.\n"
+            "💡 Вы можете продолжать пользоваться ботом - я уведомлю вас, когда конвертация завершится!"
+        )
         
-        # Проверяем файл перед конвертацией через ffprobe
+        # Сохраняем информацию о конвертации
+        user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
+        file_id_for_conversion = f"url_{hash(file_path)}"  # Уникальный ID для URL конвертации
+        conversion_key = (user_id, file_id_for_conversion)
+        active_conversions[conversion_key] = {
+            'status_message': status_message,
+            'file_path': file_path,
+            'chat_id': chat_id,
+            'user_id': user_id
+        }
+        
+        # Запускаем конвертацию в фоновой задаче
+        asyncio.create_task(
+            _convert_video_background(
+                file_path=file_path,
+                file_id=file_id_for_conversion,
+                user_id=user_id,
+                chat_id=chat_id,
+                status_message=status_message
+            )
+        )
+        
+        # Функция завершается здесь, бот может обрабатывать другие запросы
+        logger.info(f"✅ Конвертация запущена в фоне для пользователя {user_id}, файл из URL")
+        
+        # Проверяем файл перед конвертацией через ffprobe (опционально, можно убрать)
         try:
             import subprocess
             from video_converter import FFMPEG_PATH as VIDEO_FFMPEG_PATH
@@ -866,10 +997,43 @@ async def handle_video_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Не удалось проверить файл через ffprobe: {probe_error}")
             # Продолжаем, если проверка не удалась
         
-        # Конвертируем видео
-        output_path = await convert_video_to_mp4(file_path, file_id)
+        # Обновляем статус и запускаем конвертацию в фоне
+        await status_message.edit_text(
+            "🔄 Конвертирую видео в MP4 1920x1080...\n\n"
+            "⏳ Это может занять некоторое время.\n"
+            "💡 Вы можете продолжать пользоваться ботом - я уведомлю вас, когда конвертация завершится!"
+        )
         
-        if output_path and os.path.exists(output_path):
+        # Сохраняем информацию о конвертации
+        user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
+        file_id_for_conversion = f"url_{hash(file_path)}"  # Уникальный ID для URL конвертации
+        conversion_key = (user_id, file_id_for_conversion)
+        active_conversions[conversion_key] = {
+            'status_message': status_message,
+            'file_path': file_path,
+            'chat_id': chat_id,
+            'user_id': user_id
+        }
+        
+        # Запускаем конвертацию в фоновой задаче
+        asyncio.create_task(
+            _convert_video_background(
+                file_path=file_path,
+                file_id=file_id_for_conversion,
+                user_id=user_id,
+                chat_id=chat_id,
+                status_message=status_message
+            )
+        )
+        
+        # Функция завершается здесь, бот может обрабатывать другие запросы
+        logger.info(f"✅ Конвертация запущена в фоне для пользователя {user_id}, файл из URL")
+        return  # Завершаем функцию, конвертация идет в фоне
+        
+        # Код ниже больше не выполняется, так как функция завершается выше
+        # Оставлен для справки
+        if False and output_path and os.path.exists(output_path):
             # Проверяем размер результата перед отправкой
             output_size = os.path.getsize(output_path)
             
@@ -1652,6 +1816,9 @@ def main():
             logger.info("Используется стандартный Telegram Bot API")
             request = HTTPXRequest(**request_kwargs)
             application = Application.builder().token(TELEGRAM_BOT_TOKEN).request(request).build()
+        
+        # Сохраняем application в глобальной переменной для доступа из фоновых задач
+        globals()['application'] = application
         
         # Регистрируем обработчики
         # Обработчик кнопок должен быть первым
