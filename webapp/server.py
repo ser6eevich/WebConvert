@@ -7,10 +7,11 @@ import uuid
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Template
 from dotenv import load_dotenv
+from datetime import datetime
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -226,6 +227,90 @@ async def upload_form():
             .send-button.show {
                 display: block;
             }
+            .videos-list {
+                margin-top: 30px;
+                padding-top: 30px;
+                border-top: 2px solid var(--tg-theme-hint-color, #999999);
+            }
+            .videos-list h2 {
+                margin-bottom: 20px;
+                color: var(--tg-theme-text-color, #000000);
+            }
+            .video-item {
+                background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+                border-radius: 8px;
+                padding: 15px;
+                margin-bottom: 15px;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }
+            .video-item-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+            .video-item-name {
+                font-weight: 500;
+                color: var(--tg-theme-text-color, #000000);
+                word-break: break-all;
+            }
+            .video-item-size {
+                color: var(--tg-theme-hint-color, #999999);
+                font-size: 0.9em;
+            }
+            .video-item-url {
+                background: var(--tg-theme-bg-color, #ffffff);
+                padding: 10px;
+                border-radius: 6px;
+                word-break: break-all;
+                font-size: 0.9em;
+                color: var(--tg-theme-link-color, #3390ec);
+            }
+            .video-item-actions {
+                display: flex;
+                gap: 10px;
+            }
+            .video-item-btn {
+                flex: 1;
+                padding: 8px 16px;
+                border: none;
+                border-radius: 6px;
+                font-size: 14px;
+                cursor: pointer;
+                transition: opacity 0.3s;
+            }
+            .video-item-btn:hover {
+                opacity: 0.8;
+            }
+            .btn-copy {
+                background: var(--tg-theme-button-color, #3390ec);
+                color: var(--tg-theme-button-text-color, #ffffff);
+            }
+            .btn-delete {
+                background: #dc3545;
+                color: #ffffff;
+            }
+            .btn-refresh {
+                width: 100%;
+                margin-top: 15px;
+                padding: 10px;
+                background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+                color: var(--tg-theme-text-color, #000000);
+                border: 1px solid var(--tg-theme-hint-color, #999999);
+                border-radius: 6px;
+                cursor: pointer;
+            }
+            .loading {
+                text-align: center;
+                padding: 20px;
+                color: var(--tg-theme-hint-color, #999999);
+            }
+            .empty-list {
+                text-align: center;
+                padding: 40px;
+                color: var(--tg-theme-hint-color, #999999);
+            }
         </style>
     </head>
     <body>
@@ -250,6 +335,16 @@ async def upload_form():
                     Отправить ссылку в Telegram
                 </button>
             </form>
+            
+            <div class="videos-list">
+                <h2>📹 Загруженные видео</h2>
+                <button type="button" class="btn-refresh" onclick="loadVideosList()">
+                    🔄 Обновить список
+                </button>
+                <div id="videosListContainer">
+                    <div class="loading">Загрузка списка видео...</div>
+                </div>
+            </div>
         </div>
 
         <script>
@@ -352,6 +447,11 @@ async def upload_form():
                             videoUrlDiv.innerHTML = `<strong>Прямая ссылка:</strong><br><a href="${videoUrl}" target="_blank">${videoUrl}</a>`;
                             videoUrlDiv.classList.add('show');
                             sendButton.classList.add('show');
+                            
+                            // Обновляем список видео после успешной загрузки
+                            setTimeout(() => {
+                                loadVideosList();
+                            }, 500);
                         } else {
                             const error = JSON.parse(xhr.responseText);
                             showMessage(error.detail || 'Ошибка при загрузке файла', 'error');
@@ -388,6 +488,128 @@ async def upload_form():
                     showMessage('Ссылка на видео не найдена', 'error');
                 }
             }
+
+            // Загрузка списка видео
+            async function loadVideosList() {
+                const container = document.getElementById('videosListContainer');
+                container.innerHTML = '<div class="loading">Загрузка списка видео...</div>';
+                
+                try {
+                    const response = await fetch('/api/videos');
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Ошибка при загрузке списка');
+                    }
+                    
+                    const videos = data.videos || [];
+                    
+                    if (videos.length === 0) {
+                        container.innerHTML = '<div class="empty-list">📭 Видео файлов пока нет</div>';
+                        return;
+                    }
+                    
+                    let html = '';
+                    videos.forEach(video => {
+                        const date = new Date(video.created_at);
+                        const dateStr = date.toLocaleString('ru-RU', {
+                            year: 'numeric',
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        });
+                        
+                        html += `
+                            <div class="video-item">
+                                <div class="video-item-header">
+                                    <div class="video-item-name">${escapeHtml(video.filename)}</div>
+                                    <div class="video-item-size">${video.size_mb} MB</div>
+                                </div>
+                                <div style="font-size: 0.85em; color: var(--tg-theme-hint-color, #999999);">
+                                    📅 ${dateStr}
+                                </div>
+                                <div class="video-item-url" id="url-${escapeHtml(video.filename)}">
+                                    ${escapeHtml(video.url)}
+                                </div>
+                                <div class="video-item-actions">
+                                    <button type="button" class="video-item-btn btn-copy" onclick="copyVideoUrl('${escapeHtml(video.url)}', '${escapeHtml(video.filename)}')">
+                                        📋 Копировать ссылку
+                                    </button>
+                                    <button type="button" class="video-item-btn btn-delete" onclick="deleteVideo('${escapeHtml(video.filename)}')">
+                                        🗑️ Удалить
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    container.innerHTML = html;
+                } catch (error) {
+                    container.innerHTML = `<div class="message error show">Ошибка: ${escapeHtml(error.message)}</div>`;
+                }
+            }
+
+            // Копирование ссылки на видео
+            async function copyVideoUrl(url, filename) {
+                try {
+                    await navigator.clipboard.writeText(url);
+                    showMessage(`✅ Ссылка на ${filename} скопирована!`, 'success');
+                } catch (error) {
+                    // Fallback для старых браузеров
+                    const textArea = document.createElement('textarea');
+                    textArea.value = url;
+                    textArea.style.position = 'fixed';
+                    textArea.style.opacity = '0';
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    try {
+                        document.execCommand('copy');
+                        showMessage(`✅ Ссылка на ${filename} скопирована!`, 'success');
+                    } catch (err) {
+                        showMessage('❌ Не удалось скопировать ссылку', 'error');
+                    }
+                    document.body.removeChild(textArea);
+                }
+            }
+
+            // Удаление видео
+            async function deleteVideo(filename) {
+                if (!confirm(`Вы уверены, что хотите удалить видео "${filename}"?`)) {
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(`/api/videos/${encodeURIComponent(filename)}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Ошибка при удалении');
+                    }
+                    
+                    showMessage(`✅ Видео ${filename} удалено`, 'success');
+                    
+                    // Обновляем список
+                    setTimeout(() => {
+                        loadVideosList();
+                    }, 500);
+                } catch (error) {
+                    showMessage(`❌ Ошибка: ${escapeHtml(error.message)}`, 'error');
+                }
+            }
+
+            // Экранирование HTML
+            function escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            // Загружаем список при загрузке страницы
+            loadVideosList();
         </script>
     </body>
     </html>
@@ -475,7 +697,19 @@ async def get_video(filename: str):
     Returns:
         Видео файл
     """
-    file_path = VIDEOS_DIR / filename
+    # Получаем абсолютный путь к файлу
+    if VIDEOS_DIR.is_absolute():
+        videos_path = VIDEOS_DIR
+    else:
+        videos_path = Path.cwd() / VIDEOS_DIR
+    
+    videos_path = videos_path.resolve()
+    file_path = videos_path / filename
+    file_path = file_path.resolve()
+    
+    # Проверка безопасности: файл должен быть внутри videos_path
+    if not str(file_path).startswith(str(videos_path)):
+        raise HTTPException(status_code=403, detail="Доступ запрещен")
     
     # Проверяем, что файл существует
     if not file_path.exists():
@@ -496,6 +730,116 @@ async def get_video(filename: str):
 async def health_check():
     """Проверка здоровья сервера"""
     return {"status": "ok", "videos_dir": str(VIDEOS_DIR.absolute())}
+
+
+@app.get("/api/videos")
+async def list_videos():
+    """
+    GET /api/videos - возвращает список всех видео файлов
+    
+    Returns:
+        JSON с массивом видео файлов (имя, размер, дата создания, URL)
+    """
+    try:
+        videos = []
+        
+        # Получаем абсолютный путь к директории
+        if VIDEOS_DIR.is_absolute():
+            videos_path = VIDEOS_DIR
+        else:
+            # Если относительный путь, берем относительно текущей рабочей директории
+            videos_path = Path.cwd() / VIDEOS_DIR
+        
+        # Нормализуем путь
+        videos_path = videos_path.resolve()
+        
+        if not videos_path.exists():
+            logger.warning(f"Директория видео не существует: {videos_path}")
+            return JSONResponse(content={"videos": []})
+        
+        # Проходим по всем файлам в директории
+        for file_path in videos_path.iterdir():
+            if file_path.is_file() and is_video_file(file_path.name):
+                try:
+                    file_size = file_path.stat().st_size
+                    file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+                    
+                    video_url = f"{PUBLIC_BASE_URL}/videos/{file_path.name}"
+                    
+                    videos.append({
+                        "filename": file_path.name,
+                        "size": file_size,
+                        "size_mb": round(file_size / 1024 / 1024, 2),
+                        "created_at": file_mtime.isoformat(),
+                        "url": video_url
+                    })
+                except Exception as e:
+                    logger.warning(f"Ошибка при обработке файла {file_path.name}: {e}")
+                    continue
+        
+        # Сортируем по дате создания (новые первыми)
+        videos.sort(key=lambda x: x["created_at"], reverse=True)
+        
+        logger.info(f"Найдено видео файлов: {len(videos)}")
+        
+        return JSONResponse(content={"videos": videos})
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении списка видео: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка при получении списка видео: {str(e)}")
+
+
+@app.delete("/api/videos/{filename}")
+async def delete_video(filename: str):
+    """
+    DELETE /api/videos/{filename} - удаляет видео файл
+    
+    Args:
+        filename: Имя файла для удаления
+        
+    Returns:
+        JSON с результатом удаления
+    """
+    try:
+        # Проверяем, что это видео файл
+        if not is_video_file(filename):
+            raise HTTPException(status_code=400, detail="Неподдерживаемый формат файла")
+        
+        # Получаем абсолютный путь к директории
+        if VIDEOS_DIR.is_absolute():
+            videos_path = VIDEOS_DIR
+        else:
+            videos_path = Path.cwd() / VIDEOS_DIR
+        
+        videos_path = videos_path.resolve()
+        file_path = videos_path / filename
+        
+        # Нормализуем путь для безопасности
+        file_path = file_path.resolve()
+        
+        # Проверяем, что файл находится в правильной директории (безопасность)
+        if not str(file_path).startswith(str(videos_path)):
+            raise HTTPException(status_code=403, detail="Доступ запрещен")
+        
+        # Проверяем, что файл существует
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Файл не найден")
+        
+        # Удаляем файл
+        file_path.unlink()
+        
+        logger.info(f"✅ Видео удалено: {filename}")
+        
+        return JSONResponse(content={
+            "status": "success",
+            "message": f"Видео {filename} успешно удалено"
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при удалении видео: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка при удалении видео: {str(e)}")
 
 
 if __name__ == "__main__":
