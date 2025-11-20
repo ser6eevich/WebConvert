@@ -19,6 +19,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Отключаем избыточные логи от httpx (успешные HTTP запросы)
+# Оставляем только ошибки (WARNING и выше)
+logging.getLogger('httpx').setLevel(logging.WARNING)
+
+# Также отключаем избыточные логи от httpcore (низкоуровневая библиотека httpx)
+logging.getLogger('httpcore').setLevel(logging.WARNING)
+
 # Получаем токены из переменных окружения
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')

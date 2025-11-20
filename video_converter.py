@@ -3,6 +3,7 @@ import asyncio
 import ffmpeg
 import logging
 import subprocess
+import shutil
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -17,6 +18,37 @@ FFMPEG_PATH = os.getenv('FFMPEG_PATH', 'ffmpeg')  # По умолчанию ищ
 # Если указан путь, нормализуем его
 if FFMPEG_PATH != 'ffmpeg':
     FFMPEG_PATH = os.path.expanduser(FFMPEG_PATH)
+
+# Определяем пути к ffmpeg и ffprobe
+def _get_ffmpeg_paths():
+    """
+    Определяет пути к ffmpeg и ffprobe
+    
+    Returns:
+        tuple: (ffmpeg_path, ffprobe_path)
+    """
+    ffmpeg_path = None
+    ffprobe_path = None
+    
+    # Если указан кастомный путь
+    if FFMPEG_PATH != 'ffmpeg' and os.path.exists(FFMPEG_PATH):
+        ffmpeg_path = FFMPEG_PATH
+        # Ищем ffprobe в той же директории
+        ffmpeg_dir = os.path.dirname(FFMPEG_PATH)
+        if FFMPEG_PATH.endswith('.exe'):
+            ffprobe_path = os.path.join(ffmpeg_dir, 'ffprobe.exe')
+        else:
+            ffprobe_path = os.path.join(ffmpeg_dir, 'ffprobe')
+        
+        # Если ffprobe не найден в той же директории, ищем в PATH
+        if not os.path.exists(ffprobe_path):
+            ffprobe_path = shutil.which('ffprobe') or 'ffprobe'
+    else:
+        # Ищем в системном PATH
+        ffmpeg_path = shutil.which('ffmpeg') or 'ffmpeg'
+        ffprobe_path = shutil.which('ffprobe') or 'ffprobe'
+    
+    return ffmpeg_path, ffprobe_path
 
 
 async def convert_video_to_mp4(input_path: str, file_id: str) -> str:
@@ -68,20 +100,70 @@ def _convert_video_sync(input_path: str, output_path: str):
         output_path: Путь для сохранения результата
     """
     try:
-        # Если указан кастомный путь к FFmpeg, используем его
+        # Получаем пути к ffmpeg и ffprobe
+        ffmpeg_path, ffprobe_path = _get_ffmpeg_paths()
+        
+        # Настраиваем пути для библиотеки ffmpeg-python
         if FFMPEG_PATH != 'ffmpeg' and os.path.exists(FFMPEG_PATH):
-            # Устанавливаем путь к FFmpeg для библиотеки ffmpeg-python
-            # Добавляем директорию с FFmpeg в начало PATH
+            # Если указан кастомный путь, добавляем директорию в PATH
             ffmpeg_dir = os.path.dirname(FFMPEG_PATH)
             if ffmpeg_dir:
                 os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ.get('PATH', '')
-            logger.info(f"Используется FFmpeg из: {FFMPEG_PATH}")
+            logger.info(f"Используется FFmpeg из: {ffmpeg_path}, ffprobe из: {ffprobe_path}")
         else:
             # Используем FFmpeg из системного PATH
-            logger.info("Используется FFmpeg из системного PATH")
+            logger.info(f"Используется FFmpeg из системного PATH: {ffmpeg_path}, ffprobe: {ffprobe_path}")
         
-        # Загружаем видео
-        probe = ffmpeg.probe(input_path)
+        # Настраиваем ffmpeg-python для использования правильных путей
+        # Библиотека ffmpeg-python использует переменные окружения или ищет в PATH
+        # Убеждаемся, что ffprobe доступен
+        if ffprobe_path and ffprobe_path != 'ffprobe':
+            # Если путь к ffprobe указан явно, добавляем его директорию в PATH
+            ffprobe_dir = os.path.dirname(ffprobe_path)
+            if ffprobe_dir:
+                os.environ['PATH'] = ffprobe_dir + os.pathsep + os.environ.get('PATH', '')
+        
+        # Проверяем доступность ffprobe
+        try:
+            result = subprocess.run(
+                [ffprobe_path, '-version'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode != 0:
+                logger.warning(f"ffprobe найден, но не работает: {ffprobe_path}")
+                raise RuntimeError(f"ffprobe не работает. Проверьте установку FFmpeg.")
+        except FileNotFoundError:
+            logger.error(f"ffprobe не найден по пути: {ffprobe_path}")
+            raise RuntimeError(f"ffprobe не найден. Установите FFmpeg: sudo apt install ffmpeg")
+        
+        # Настраиваем библиотеку ffmpeg-python для использования правильного пути к ffprobe
+        # Библиотека ищет ffprobe в PATH, поэтому мы уже добавили директорию в PATH выше
+        # Но можно также явно указать путь через переменную окружения
+        if ffprobe_path and ffprobe_path != 'ffprobe':
+            # Если путь к ffprobe указан явно, убеждаемся, что он в PATH
+            ffprobe_dir = os.path.dirname(ffprobe_path)
+            if ffprobe_dir and ffprobe_dir not in os.environ.get('PATH', '').split(os.pathsep):
+                os.environ['PATH'] = ffprobe_dir + os.pathsep + os.environ.get('PATH', '')
+                logger.info(f"Добавлена директория ffprobe в PATH: {ffprobe_dir}")
+        
+        # Загружаем видео через ffmpeg.probe
+        # Библиотека ffmpeg-python будет использовать ffprobe из PATH
+        # Если ffprobe все еще не найден, попробуем использовать явный путь
+        try:
+            probe = ffmpeg.probe(input_path)
+        except FileNotFoundError as e:
+            # Если ffprobe не найден, попробуем использовать явный путь
+            if 'ffprobe' in str(e).lower():
+                logger.error(f"ffprobe не найден библиотекой ffmpeg-python. Путь: {ffprobe_path}")
+                logger.error(f"PATH: {os.environ.get('PATH', '')[:200]}")
+                raise RuntimeError(
+                    f"ffprobe не найден. Проверьте установку:\n"
+                    f"  which ffprobe\n"
+                    f"  sudo apt install ffmpeg"
+                )
+            raise
         video_streams = [s for s in probe['streams'] if s['codec_type'] == 'video']
         
         if not video_streams:
