@@ -352,6 +352,7 @@ def _convert_video_sync(input_path: str, output_path: str):
         # Настройки для аппаратного ускорения
         if video_codec == 'h264_nvenc':
             # NVIDIA NVENC настройки
+            # Важно: для NVENC некоторые параметры передаются через дополнительные опции
             hw_output_options = {
                 'preset': 'fast',  # fast, medium, slow для NVENC
                 'rc': 'vbr',  # Variable bitrate
@@ -385,8 +386,11 @@ def _convert_video_sync(input_path: str, output_path: str):
             'acodec': 'aac',
             'audio_bitrate': '192k',
             'movflags': 'faststart',  # Для быстрого воспроизведения в браузере
-            'pix_fmt': 'yuv420p',  # Совместимость с большинством устройств
         }
+        
+        # Для NVENC pix_fmt должен быть установлен отдельно или не указан (NVENC сам выберет)
+        if video_codec != 'h264_nvenc':
+            output_kwargs['pix_fmt'] = 'yuv420p'  # Совместимость с большинством устройств
         
         # Добавляем видеокодек
         output_kwargs['vcodec'] = video_codec
@@ -403,16 +407,24 @@ def _convert_video_sync(input_path: str, output_path: str):
             # Для аппаратного ускорения добавляем специфичные опции
             output_kwargs.update(hw_output_options)
         
-        stream = ffmpeg.output(stream, output_path, **output_kwargs)
-        
-        # Логируем используемые настройки
+        # Логируем используемые настройки перед компиляцией
         logger.info(f"⚙️ Настройки конвертации: codec={video_codec}, preset={FFMPEG_PRESET if video_codec == 'libx264' else hw_output_options.get('preset', 'N/A')}")
+        
+        stream = ffmpeg.output(stream, output_path, **output_kwargs)
         
         # Запускаем конвертацию с отслеживанием прогресса
         # Используем subprocess для чтения stderr в реальном времени
         
         # Получаем команду FFmpeg из потока
-        cmd = ffmpeg.compile(stream, overwrite_output=True)
+        try:
+            cmd = ffmpeg.compile(stream, overwrite_output=True)
+            # Логируем команду для отладки (первые 300 символов)
+            cmd_str = ' '.join(cmd)
+            logger.info(f"🔧 Команда FFmpeg (первые 300 символов): {cmd_str[:300]}...")
+        except Exception as compile_error:
+            logger.error(f"❌ Ошибка при компиляции команды FFmpeg: {compile_error}")
+            logger.error(f"❌ Параметры output_kwargs: {output_kwargs}")
+            raise RuntimeError(f"Ошибка при формировании команды FFmpeg: {compile_error}")
         
         # Логируем начало конвертации
         if duration > 0:
