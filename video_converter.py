@@ -11,7 +11,12 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Проверяем, указан ли путь к FFmpeg вручную
+# Если FFMPEG_PATH не указан в .env, используем 'ffmpeg' из системного PATH
 FFMPEG_PATH = os.getenv('FFMPEG_PATH', 'ffmpeg')  # По умолчанию ищем в PATH
+
+# Если указан путь, нормализуем его
+if FFMPEG_PATH != 'ffmpeg':
+    FFMPEG_PATH = os.path.expanduser(FFMPEG_PATH)
 
 
 async def convert_video_to_mp4(input_path: str, file_id: str) -> str:
@@ -63,13 +68,17 @@ def _convert_video_sync(input_path: str, output_path: str):
         output_path: Путь для сохранения результата
     """
     try:
-        # Если указан кастомный путь к FFmpeg, устанавливаем его
+        # Если указан кастомный путь к FFmpeg, используем его
         if FFMPEG_PATH != 'ffmpeg' and os.path.exists(FFMPEG_PATH):
             # Устанавливаем путь к FFmpeg для библиотеки ffmpeg-python
-            import ffmpeg
-            ffmpeg_path = os.path.dirname(FFMPEG_PATH)
-            os.environ['PATH'] = ffmpeg_path + os.pathsep + os.environ.get('PATH', '')
+            # Добавляем директорию с FFmpeg в начало PATH
+            ffmpeg_dir = os.path.dirname(FFMPEG_PATH)
+            if ffmpeg_dir:
+                os.environ['PATH'] = ffmpeg_dir + os.pathsep + os.environ.get('PATH', '')
             logger.info(f"Используется FFmpeg из: {FFMPEG_PATH}")
+        else:
+            # Используем FFmpeg из системного PATH
+            logger.info("Используется FFmpeg из системного PATH")
         
         # Загружаем видео
         probe = ffmpeg.probe(input_path)

@@ -314,8 +314,13 @@ async def upload_form():
         </style>
     </head>
     <body>
-        <div class="container">
+            <div class="container">
             <h1>🎬 Загрузка видео</h1>
+            <div style="margin-bottom: 20px;">
+                <a href="/files" style="display: inline-block; padding: 10px 20px; background: var(--tg-theme-button-color, #3390ec); color: var(--tg-theme-button-text-color, #ffffff); text-decoration: none; border-radius: 8px; font-weight: 500;">
+                    📁 Все файлы
+                </a>
+            </div>
             <form id="uploadForm" enctype="multipart/form-data">
                 <div class="upload-area" id="uploadArea">
                     <label for="fileInput" class="file-label">
@@ -336,15 +341,6 @@ async def upload_form():
                 </button>
             </form>
             
-            <div class="videos-list">
-                <h2>📹 Загруженные видео</h2>
-                <button type="button" class="btn-refresh" onclick="loadVideosList()">
-                    🔄 Обновить список
-                </button>
-                <div id="videosListContainer">
-                    <div class="loading">Загрузка списка видео...</div>
-                </div>
-            </div>
         </div>
 
         <script>
@@ -447,11 +443,6 @@ async def upload_form():
                             videoUrlDiv.innerHTML = `<strong>Прямая ссылка:</strong><br><a href="${videoUrl}" target="_blank">${videoUrl}</a>`;
                             videoUrlDiv.classList.add('show');
                             sendButton.classList.add('show');
-                            
-                            // Обновляем список видео после успешной загрузки
-                            setTimeout(() => {
-                                loadVideosList();
-                            }, 500);
                         } else {
                             const error = JSON.parse(xhr.responseText);
                             showMessage(error.detail || 'Ошибка при загрузке файла', 'error');
@@ -488,128 +479,6 @@ async def upload_form():
                     showMessage('Ссылка на видео не найдена', 'error');
                 }
             }
-
-            // Загрузка списка видео
-            async function loadVideosList() {
-                const container = document.getElementById('videosListContainer');
-                container.innerHTML = '<div class="loading">Загрузка списка видео...</div>';
-                
-                try {
-                    const response = await fetch('/api/videos');
-                    const data = await response.json();
-                    
-                    if (!response.ok) {
-                        throw new Error(data.detail || 'Ошибка при загрузке списка');
-                    }
-                    
-                    const videos = data.videos || [];
-                    
-                    if (videos.length === 0) {
-                        container.innerHTML = '<div class="empty-list">📭 Видео файлов пока нет</div>';
-                        return;
-                    }
-                    
-                    let html = '';
-                    videos.forEach(video => {
-                        const date = new Date(video.created_at);
-                        const dateStr = date.toLocaleString('ru-RU', {
-                            year: 'numeric',
-                            month: '2-digit',
-                            day: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit'
-                        });
-                        
-                        html += `
-                            <div class="video-item">
-                                <div class="video-item-header">
-                                    <div class="video-item-name">${escapeHtml(video.filename)}</div>
-                                    <div class="video-item-size">${video.size_mb} MB</div>
-                                </div>
-                                <div style="font-size: 0.85em; color: var(--tg-theme-hint-color, #999999);">
-                                    📅 ${dateStr}
-                                </div>
-                                <div class="video-item-url" id="url-${escapeHtml(video.filename)}">
-                                    ${escapeHtml(video.url)}
-                                </div>
-                                <div class="video-item-actions">
-                                    <button type="button" class="video-item-btn btn-copy" onclick="copyVideoUrl('${escapeHtml(video.url)}', '${escapeHtml(video.filename)}')">
-                                        📋 Копировать ссылку
-                                    </button>
-                                    <button type="button" class="video-item-btn btn-delete" onclick="deleteVideo('${escapeHtml(video.filename)}')">
-                                        🗑️ Удалить
-                                    </button>
-                                </div>
-                            </div>
-                        `;
-                    });
-                    
-                    container.innerHTML = html;
-                } catch (error) {
-                    container.innerHTML = `<div class="message error show">Ошибка: ${escapeHtml(error.message)}</div>`;
-                }
-            }
-
-            // Копирование ссылки на видео
-            async function copyVideoUrl(url, filename) {
-                try {
-                    await navigator.clipboard.writeText(url);
-                    showMessage(`✅ Ссылка на ${filename} скопирована!`, 'success');
-                } catch (error) {
-                    // Fallback для старых браузеров
-                    const textArea = document.createElement('textarea');
-                    textArea.value = url;
-                    textArea.style.position = 'fixed';
-                    textArea.style.opacity = '0';
-                    document.body.appendChild(textArea);
-                    textArea.select();
-                    try {
-                        document.execCommand('copy');
-                        showMessage(`✅ Ссылка на ${filename} скопирована!`, 'success');
-                    } catch (err) {
-                        showMessage('❌ Не удалось скопировать ссылку', 'error');
-                    }
-                    document.body.removeChild(textArea);
-                }
-            }
-
-            // Удаление видео
-            async function deleteVideo(filename) {
-                if (!confirm(`Вы уверены, что хотите удалить видео "${filename}"?`)) {
-                    return;
-                }
-                
-                try {
-                    const response = await fetch(`/api/videos/${encodeURIComponent(filename)}`, {
-                        method: 'DELETE'
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (!response.ok) {
-                        throw new Error(data.detail || 'Ошибка при удалении');
-                    }
-                    
-                    showMessage(`✅ Видео ${filename} удалено`, 'success');
-                    
-                    // Обновляем список
-                    setTimeout(() => {
-                        loadVideosList();
-                    }, 500);
-                } catch (error) {
-                    showMessage(`❌ Ошибка: ${escapeHtml(error.message)}`, 'error');
-                }
-            }
-
-            // Экранирование HTML
-            function escapeHtml(text) {
-                const div = document.createElement('div');
-                div.textContent = text;
-                return div.innerHTML;
-            }
-
-            // Загружаем список при загрузке страницы
-            loadVideosList();
         </script>
     </body>
     </html>
@@ -724,6 +593,377 @@ async def get_video(filename: str):
         media_type='video/mp4',
         filename=filename
     )
+
+
+@app.get("/files", response_class=HTMLResponse)
+async def files_list():
+    """
+    GET /files - отображает HTML страницу со списком всех видео файлов
+    """
+    html_template = """
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Все файлы</title>
+        <script src="https://telegram.org/js/telegram-web-app.js"></script>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                background: var(--tg-theme-bg-color, #ffffff);
+                color: var(--tg-theme-text-color, #000000);
+                padding: 20px;
+            }
+            .container {
+                max-width: 800px;
+                margin: 0 auto;
+            }
+            h1 {
+                margin-bottom: 20px;
+                color: var(--tg-theme-text-color, #000000);
+            }
+            .header-actions {
+                display: flex;
+                gap: 10px;
+                margin-bottom: 20px;
+                flex-wrap: wrap;
+            }
+            .btn {
+                padding: 10px 20px;
+                border: none;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 14px;
+                text-decoration: none;
+                display: inline-block;
+                transition: opacity 0.3s;
+            }
+            .btn:hover {
+                opacity: 0.8;
+            }
+            .btn-primary {
+                background: var(--tg-theme-button-color, #3390ec);
+                color: var(--tg-theme-button-text-color, #ffffff);
+            }
+            .btn-secondary {
+                background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+                color: var(--tg-theme-text-color, #000000);
+            }
+            .btn-danger {
+                background: #dc3545;
+                color: #ffffff;
+            }
+            .video-item {
+                background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+                border-radius: 8px;
+                padding: 15px;
+                margin-bottom: 15px;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }
+            .video-item-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 10px;
+            }
+            .video-item-name {
+                font-weight: 500;
+                color: var(--tg-theme-text-color, #000000);
+                word-break: break-all;
+                flex: 1;
+            }
+            .video-item-size {
+                color: var(--tg-theme-hint-color, #999999);
+                font-size: 0.9em;
+            }
+            .video-item-date {
+                font-size: 0.85em;
+                color: var(--tg-theme-hint-color, #999999);
+            }
+            .video-item-url {
+                background: var(--tg-theme-bg-color, #ffffff);
+                padding: 10px;
+                border-radius: 6px;
+                word-break: break-all;
+                font-size: 0.9em;
+                color: var(--tg-theme-link-color, #3390ec);
+                border: 1px solid var(--tg-theme-hint-color, #e0e0e0);
+            }
+            .video-item-actions {
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+            }
+            .video-item-btn {
+                flex: 1;
+                min-width: 120px;
+                padding: 8px 16px;
+                border: none;
+                border-radius: 6px;
+                font-size: 14px;
+                cursor: pointer;
+                transition: opacity 0.3s;
+            }
+            .video-item-btn:hover {
+                opacity: 0.8;
+            }
+            .btn-copy {
+                background: var(--tg-theme-button-color, #3390ec);
+                color: var(--tg-theme-button-text-color, #ffffff);
+            }
+            .btn-delete {
+                background: #dc3545;
+                color: #ffffff;
+            }
+            .loading {
+                text-align: center;
+                padding: 40px;
+                color: var(--tg-theme-hint-color, #999999);
+            }
+            .empty-list {
+                text-align: center;
+                padding: 40px;
+                color: var(--tg-theme-hint-color, #999999);
+            }
+            .message {
+                padding: 12px;
+                border-radius: 6px;
+                margin-bottom: 15px;
+                display: none;
+            }
+            .message.show {
+                display: block;
+            }
+            .message.success {
+                background: #d4edda;
+                color: #155724;
+                border: 1px solid #c3e6cb;
+            }
+            .message.error {
+                background: #f8d7da;
+                color: #721c24;
+                border: 1px solid #f5c6cb;
+            }
+            .stats {
+                background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+                padding: 15px;
+                border-radius: 8px;
+                margin-bottom: 20px;
+                display: flex;
+                justify-content: space-around;
+                flex-wrap: wrap;
+                gap: 15px;
+            }
+            .stat-item {
+                text-align: center;
+            }
+            .stat-value {
+                font-size: 24px;
+                font-weight: bold;
+                color: var(--tg-theme-text-color, #000000);
+            }
+            .stat-label {
+                font-size: 12px;
+                color: var(--tg-theme-hint-color, #999999);
+                margin-top: 5px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>📁 Все файлы</h1>
+            
+            <div class="header-actions">
+                <a href="/upload" class="btn btn-primary">⬆️ Загрузить видео</a>
+                <button type="button" class="btn btn-secondary" onclick="loadVideosList()">🔄 Обновить</button>
+            </div>
+            
+            <div class="message" id="message"></div>
+            
+            <div class="stats" id="stats" style="display: none;">
+                <div class="stat-item">
+                    <div class="stat-value" id="totalFiles">0</div>
+                    <div class="stat-label">Всего файлов</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="totalSize">0 MB</div>
+                    <div class="stat-label">Общий размер</div>
+                </div>
+            </div>
+            
+            <div id="videosListContainer">
+                <div class="loading">Загрузка списка видео...</div>
+            </div>
+        </div>
+
+        <script>
+            const tg = window.Telegram.WebApp;
+            tg.ready();
+            tg.expand();
+
+            // Загрузка списка видео
+            async function loadVideosList() {
+                const container = document.getElementById('videosListContainer');
+                const message = document.getElementById('message');
+                const stats = document.getElementById('stats');
+                
+                container.innerHTML = '<div class="loading">Загрузка списка видео...</div>';
+                message.className = 'message';
+                stats.style.display = 'none';
+                
+                try {
+                    const response = await fetch('/api/videos');
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Ошибка при загрузке списка');
+                    }
+                    
+                    const videos = data.videos || [];
+                    
+                    if (videos.length === 0) {
+                        container.innerHTML = '<div class="empty-list">📭 Видео файлов пока нет</div>';
+                        return;
+                    }
+                    
+                    // Подсчет статистики
+                    const totalSize = videos.reduce((sum, v) => sum + v.size, 0);
+                    const totalSizeMB = (totalSize / 1024 / 1024).toFixed(2);
+                    
+                    document.getElementById('totalFiles').textContent = videos.length;
+                    document.getElementById('totalSize').textContent = totalSizeMB + ' MB';
+                    stats.style.display = 'flex';
+                    
+                    // Формирование списка
+                    let html = '';
+                    videos.forEach(video => {
+                        const date = new Date(video.created_at);
+                        const dateStr = date.toLocaleString('ru-RU', {
+                            year: 'numeric',
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        });
+                        
+                        html += `
+                            <div class="video-item">
+                                <div class="video-item-header">
+                                    <div class="video-item-name">${escapeHtml(video.filename)}</div>
+                                    <div class="video-item-size">${video.size_mb} MB</div>
+                                </div>
+                                <div class="video-item-date">
+                                    📅 ${dateStr}
+                                </div>
+                                <div class="video-item-url" id="url-${escapeHtml(video.filename)}">
+                                    ${escapeHtml(video.url)}
+                                </div>
+                                <div class="video-item-actions">
+                                    <button type="button" class="video-item-btn btn-copy" onclick="copyVideoUrl('${escapeHtml(video.url)}', '${escapeHtml(video.filename)}')">
+                                        📋 Копировать ссылку
+                                    </button>
+                                    <button type="button" class="video-item-btn btn-delete" onclick="deleteVideo('${escapeHtml(video.filename)}')">
+                                        🗑️ Удалить
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    container.innerHTML = html;
+                } catch (error) {
+                    container.innerHTML = '';
+                    message.textContent = `Ошибка: ${escapeHtml(error.message)}`;
+                    message.className = 'message error show';
+                }
+            }
+
+            // Копирование ссылки на видео
+            async function copyVideoUrl(url, filename) {
+                try {
+                    await navigator.clipboard.writeText(url);
+                    showMessage(`✅ Ссылка на ${filename} скопирована!`, 'success');
+                } catch (error) {
+                    // Fallback для старых браузеров
+                    const textArea = document.createElement('textarea');
+                    textArea.value = url;
+                    textArea.style.position = 'fixed';
+                    textArea.style.opacity = '0';
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    try {
+                        document.execCommand('copy');
+                        showMessage(`✅ Ссылка на ${filename} скопирована!`, 'success');
+                    } catch (err) {
+                        showMessage('❌ Не удалось скопировать ссылку', 'error');
+                    }
+                    document.body.removeChild(textArea);
+                }
+            }
+
+            // Удаление видео
+            async function deleteVideo(filename) {
+                if (!confirm(`Вы уверены, что хотите удалить видео "${filename}"?`)) {
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(`/api/videos/${encodeURIComponent(filename)}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Ошибка при удалении');
+                    }
+                    
+                    showMessage(`✅ Видео ${filename} удалено`, 'success');
+                    
+                    // Обновляем список
+                    setTimeout(() => {
+                        loadVideosList();
+                    }, 500);
+                } catch (error) {
+                    showMessage(`❌ Ошибка: ${escapeHtml(error.message)}`, 'error');
+                }
+            }
+
+            // Показать сообщение
+            function showMessage(text, type) {
+                const message = document.getElementById('message');
+                message.textContent = text;
+                message.className = `message ${type} show`;
+                
+                // Автоматически скрыть через 3 секунды
+                setTimeout(() => {
+                    message.className = 'message';
+                }, 3000);
+            }
+
+            // Экранирование HTML
+            function escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            // Загружаем список при загрузке страницы
+            loadVideosList();
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_template)
 
 
 @app.get("/health")

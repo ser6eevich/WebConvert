@@ -789,8 +789,11 @@ async def handle_video_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             import subprocess
             from video_converter import FFMPEG_PATH as VIDEO_FFMPEG_PATH
+            import shutil
             
             # Определяем путь к ffprobe
+            ffprobe_path = None
+            
             if VIDEO_FFMPEG_PATH != 'ffmpeg' and os.path.exists(VIDEO_FFMPEG_PATH):
                 # Если указан путь к ffmpeg, используем ffprobe из той же папки
                 if VIDEO_FFMPEG_PATH.endswith('.exe'):
@@ -798,6 +801,11 @@ async def handle_video_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     ffprobe_path = VIDEO_FFMPEG_PATH.replace('ffmpeg', 'ffprobe')
             else:
+                # Ищем ffprobe в системном PATH
+                ffprobe_path = shutil.which('ffprobe')
+            
+            # Если ffprobe не найден, используем 'ffprobe' из PATH (надеемся, что он там есть)
+            if not ffprobe_path:
                 ffprobe_path = 'ffprobe'
             
             # Быстрая проверка через ffprobe
@@ -1361,28 +1369,44 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def check_ffmpeg():
-    """Проверяет наличие FFmpeg в системе"""
+    """
+    Проверяет наличие FFmpeg в системе
+    
+    Проверяет в следующем порядке:
+    1. FFMPEG_PATH из переменных окружения (если указан)
+    2. FFmpeg в системном PATH (через shutil.which)
+    
+    Returns:
+        bool: True если FFmpeg найден и работает, False иначе
+    """
     import subprocess
     import shutil
+    import platform
     
-    # Сначала проверяем переменную окружения FFMPEG_PATH
+    # Сначала проверяем переменную окружения FFMPEG_PATH (если указана)
     custom_ffmpeg_path = os.getenv('FFMPEG_PATH')
-    if custom_ffmpeg_path and os.path.exists(custom_ffmpeg_path):
-        try:
-            result = subprocess.run(
-                [custom_ffmpeg_path, '-version'],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                logger.info(f"FFmpeg найден через FFMPEG_PATH: {custom_ffmpeg_path}")
-                print(f"✅ FFmpeg найден через переменную FFMPEG_PATH: {custom_ffmpeg_path}")
-                return True
-        except Exception as e:
-            logger.warning(f"FFmpeg по пути {custom_ffmpeg_path} не работает: {e}")
+    if custom_ffmpeg_path:
+        # Нормализуем путь
+        custom_ffmpeg_path = os.path.expanduser(custom_ffmpeg_path)
+        if os.path.exists(custom_ffmpeg_path):
+            try:
+                result = subprocess.run(
+                    [custom_ffmpeg_path, '-version'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    logger.info(f"✅ FFmpeg найден через FFMPEG_PATH: {custom_ffmpeg_path}")
+                    print(f"✅ FFmpeg найден через переменную FFMPEG_PATH: {custom_ffmpeg_path}")
+                    return True
+            except Exception as e:
+                logger.warning(f"FFmpeg по пути {custom_ffmpeg_path} не работает: {e}")
+        else:
+            logger.warning(f"FFMPEG_PATH указан, но файл не существует: {custom_ffmpeg_path}")
     
-    # Проверяем через shutil.which (более надежно)
+    # Проверяем через shutil.which (ищет в системном PATH)
+    # Это работает на Linux, macOS и Windows
     ffmpeg_path = shutil.which('ffmpeg')
     if ffmpeg_path:
         try:
@@ -1393,39 +1417,27 @@ def check_ffmpeg():
                 timeout=5
             )
             if result.returncode == 0:
-                logger.info(f"FFmpeg найден в PATH: {ffmpeg_path}")
+                logger.info(f"✅ FFmpeg найден в системном PATH: {ffmpeg_path}")
+                print(f"✅ FFmpeg найден в системном PATH: {ffmpeg_path}")
                 return True
         except Exception as e:
-            logger.warning(f"FFmpeg найден, но не работает: {e}")
-    
-    # Пробуем найти в стандартных местах Windows
-    common_paths = [
-        r'C:\ffmpeg\bin\ffmpeg.exe',
-        r'C:\Program Files\ffmpeg\bin\ffmpeg.exe',
-        r'C:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe',
-        r'D:\ffmpeg\bin\ffmpeg.exe',
-        r'D:\tools\ffmpeg\bin\ffmpeg.exe',
-    ]
-    
-    for path in common_paths:
-        if os.path.exists(path):
-            try:
-                result = subprocess.run(
-                    [path, '-version'],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if result.returncode == 0:
-                    logger.info(f"FFmpeg найден по пути: {path}")
-                    print(f"✅ FFmpeg найден: {path}")
-                    print("⚠️  Но он не в PATH. Добавьте эту папку в переменную PATH для удобства.")
-                    return True
-            except Exception:
-                continue
+            logger.warning(f"FFmpeg найден в PATH, но не работает: {e}")
     
     # Если не нашли
-    logger.error("FFmpeg не найден")
+    logger.error("❌ FFmpeg не найден в системе")
+    print("\n❌ FFmpeg не найден!")
+    print("   Установите FFmpeg:")
+    if platform.system() == 'Linux':
+        print("   Ubuntu/Debian: sudo apt install ffmpeg")
+        print("   CentOS/RHEL: sudo yum install ffmpeg")
+    elif platform.system() == 'Darwin':  # macOS
+        print("   brew install ffmpeg")
+    elif platform.system() == 'Windows':
+        print("   См. файл: FFMPEG_INSTALL_WINDOWS.md")
+        print("   Или: https://www.gyan.dev/ffmpeg/builds/")
+    else:
+        print("   Установите FFmpeg согласно документации для вашей ОС")
+    
     return False
 
 
@@ -1437,9 +1449,6 @@ def main():
         logger.warning("FFmpeg не найден. Конвертация видео может не работать.")
         print("\n⚠️  ВНИМАНИЕ: FFmpeg не найден!")
         print("   Конвертация видео будет недоступна до установки FFmpeg.")
-        print("\n📖 Инструкция по установке:")
-        print("   См. файл: FFMPEG_INSTALL_WINDOWS.md")
-        print("   Или: https://www.gyan.dev/ffmpeg/builds/")
         print("\n💡 Важно после установки:")
         print("   1. Добавьте путь к папке 'bin' в переменную PATH")
         print("   2. ЗАКРОЙТЕ и откройте заново этот терминал/IDE")
