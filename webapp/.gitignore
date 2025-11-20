@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Videos
+videos/
+*.mp4
+*.mov
+*.avi
+*.webm
+*.mkv
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+

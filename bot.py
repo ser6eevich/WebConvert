@@ -1,0 +1,1675 @@
+import os
+import logging
+import asyncio
+from pathlib import Path
+from dotenv import load_dotenv
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from video_converter import convert_video_to_mp4
+from text_generator import generate_post_from_transcription
+import httpx
+
+# Загружаем переменные окружения
+load_dotenv()
+
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Получаем токены из переменных окружения
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+
+# Настройки для локального Bot API сервера (опционально)
+# Если используется локальный Bot API сервер, укажите его URL
+# Например: http://localhost:8081 или http://your-server:8081
+TELEGRAM_LOCAL_API_URL = os.getenv('TELEGRAM_LOCAL_API_URL')  # Опционально
+
+# URL для Web App загрузки видео (опционально)
+# Например: https://my-domain.com/upload
+VIDEO_WEBAPP_URL = os.getenv('VIDEO_WEBAPP_URL')  # Опционально
+
+# Отладочное логирование для проверки значений
+if TELEGRAM_LOCAL_API_URL:
+    logger.info(f"DEBUG: TELEGRAM_LOCAL_API_URL из .env: '{TELEGRAM_LOCAL_API_URL}'")
+    logger.info(f"DEBUG: Длина TELEGRAM_LOCAL_API_URL: {len(TELEGRAM_LOCAL_API_URL)}")
+    logger.info(f"DEBUG: TELEGRAM_BOT_TOKEN начинается с: '{TELEGRAM_BOT_TOKEN[:15] if TELEGRAM_BOT_TOKEN else 'None'}...'")
+    # Проверяем, не попал ли токен в URL
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN in TELEGRAM_LOCAL_API_URL:
+        logger.error(f"ОШИБКА: Токен бота обнаружен в TELEGRAM_LOCAL_API_URL!")
+        logger.error(f"TELEGRAM_LOCAL_API_URL: '{TELEGRAM_LOCAL_API_URL}'")
+        raise ValueError("Токен бота не должен быть в TELEGRAM_LOCAL_API_URL! Проверьте файл .env")
+
+if not TELEGRAM_BOT_TOKEN:
+    raise ValueError("TELEGRAM_BOT_TOKEN не установлен в .env файле")
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY не установлен в .env файле")
+
+# Определяем лимиты в зависимости от типа API
+if TELEGRAM_LOCAL_API_URL:
+    # Локальный Bot API: до 2GB для скачивания и отправки
+    MAX_DOWNLOAD_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
+    MAX_UPLOAD_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
+    logger.info(f"Используется локальный Bot API: {TELEGRAM_LOCAL_API_URL}")
+else:
+    # Стандартный Bot API: 20MB для скачивания, 50MB для отправки
+    MAX_DOWNLOAD_SIZE = 20 * 1024 * 1024  # 20MB
+    MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50MB
+    logger.info("Используется стандартный Telegram Bot API")
+
+# GPT_ASSISTANT_ID не обязателен при запуске, но нужен для работы генератора
+GPT_ASSISTANT_ID = os.getenv('GPT_ASSISTANT_ID')
+GPT_ASSISTANT_ID_VIDEOS = os.getenv('GPT_ASSISTANT_ID_VIDEOS')  # Для постов роликов на платформе
+
+if not GPT_ASSISTANT_ID:
+    logger.warning("GPT_ASSISTANT_ID не установлен. Функция генерации поста для вебинара будет недоступна.")
+if not GPT_ASSISTANT_ID_VIDEOS:
+    logger.warning("GPT_ASSISTANT_ID_VIDEOS не установлен. Функция генерации поста для роликов будет недоступна.")
+
+# Создаем директории для работы
+Path("downloads").mkdir(exist_ok=True)
+Path("converted").mkdir(exist_ok=True)
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start"""
+    welcome_message = (
+        "👋 Привет! Я бот-помощник для работы.\n\n"
+        "Выберите функцию:\n\n"
+        "📹 **Конвертер** - конвертирует видео в MP4 1920x1080\n"
+        "✍️ **Генерация** - создает текст поста из транскрибации\n\n"
+        "Нажмите на кнопку ниже, чтобы начать:"
+    )
+    
+    # Создаем клавиатуру с кнопками
+    keyboard = [
+        [
+            InlineKeyboardButton("📹 Конвертер", callback_data="mode_converter"),
+            InlineKeyboardButton("✍️ Генерация", callback_data="mode_generator")
+        ]
+    ]
+    
+    # Добавляем кнопку загрузки видео через WebApp, если URL настроен
+    if VIDEO_WEBAPP_URL:
+        keyboard.append([
+            InlineKeyboardButton("🎬 Загрузить видео", web_app=WebAppInfo(url=VIDEO_WEBAPP_URL))
+        ])
+        logger.info(f"Добавлена кнопка WebApp для загрузки видео: {VIDEO_WEBAPP_URL}")
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(welcome_message, reply_markup=reply_markup, parse_mode='Markdown')
+    
+    # Сбрасываем режим при старте
+    context.user_data['mode'] = None
+
+
+async def reset_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /reset - сбрасывает выбранный режим"""
+    context.user_data['mode'] = None
+    context.user_data['post_type'] = None
+    context.user_data['convert_method'] = None
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("📹 Конвертер", callback_data="mode_converter"),
+            InlineKeyboardButton("✍️ Генерация", callback_data="mode_generator")
+        ]
+    ]
+    
+    # Добавляем кнопку загрузки видео через WebApp, если URL настроен
+    if VIDEO_WEBAPP_URL:
+        keyboard.append([
+            InlineKeyboardButton("🎬 Загрузить видео", web_app=WebAppInfo(url=VIDEO_WEBAPP_URL))
+        ])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "🔄 Режим сброшен. Выберите функцию:",
+        reply_markup=reply_markup
+    )
+
+
+def _format_videos_post(content_parts: dict) -> str:
+    """
+    Форматирует ответ второго ассистента (ролики) в одно сообщение
+    с отступами между темами и выделением подтем жирным
+    
+    Args:
+        content_parts: Словарь с частями ответа
+    
+    Returns:
+        Отформатированный текст для отправки одним сообщением
+    """
+    import re
+    
+    parts = []
+    
+    # Собираем все части с отступами
+    if content_parts.get('webinar_name'):
+        parts.append(content_parts['webinar_name'])
+    
+    if content_parts.get('description'):
+        parts.append(content_parts['description'])
+    
+    if content_parts.get('timestamps'):
+        parts.append(content_parts['timestamps'])
+    
+    if content_parts.get('post'):
+        parts.append(content_parts['post'])
+    
+    # Объединяем все части с двойными отступами между темами
+    formatted_text = '\n\n'.join(parts)
+    
+    # Выделяем подтемы жирным текстом
+    # Ищем строки, которые начинаются с цифры, буквы или маркера и заканчиваются двоеточием
+    # Это обычно подтемы
+    
+    # Выделяем подтемы в формате "1. Тема", "2. Тема" и т.д.
+    formatted_text = re.sub(
+        r'^(\d+\.\s+[А-ЯЁA-Z][^:\n]{0,80}):?',
+        r'*\1*',
+        formatted_text,
+        flags=re.MULTILINE
+    )
+    
+    # Выделяем подтемы с маркерами "- Тема:", "• Тема:"
+    formatted_text = re.sub(
+        r'^([\-\•]\s+[А-ЯЁA-Z][^:\n]{0,80}):?',
+        r'*\1*',
+        formatted_text,
+        flags=re.MULTILINE
+    )
+    
+    # Выделяем подтемы, которые начинаются с заглавной буквы и заканчиваются двоеточием
+    formatted_text = re.sub(
+        r'^([А-ЯЁA-Z][^:\n]{3,80}):',
+        r'*\1:*',
+        formatted_text,
+        flags=re.MULTILINE
+    )
+    
+    # Выделяем подтемы в формате "**Тема:**" (если GPT уже отформатировал)
+    formatted_text = re.sub(
+        r'\*\*([^*]+):\*\*',
+        r'*\1:*',
+        formatted_text
+    )
+    
+    # Убираем двойное выделение
+    while '**' in formatted_text:
+        formatted_text = re.sub(r'\*\*([^*]+)\*\*', r'*\1*', formatted_text)
+    
+    return formatted_text
+
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик нажатий на кнопки"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "mode_converter":
+        context.user_data['mode'] = 'converter'
+        message = (
+            "📹 **Режим: Конвертер**\n\n"
+            "Отправьте мне:\n"
+            "• 📹 **Видео** (до 2GB) - отправьте как видео, не как файл\n"
+            "• 🔗 **Ссылку на видео** - прямая ссылка на видео файл\n\n"
+            "Я конвертирую его в MP4 1920x1080.\n\n"
+            "⚠️ **ВАЖНО:** Отправляйте видео как видео (через кнопку 'Видео'), а не как файл!\n\n"
+            "Поддерживаемые форматы: MP4, MOV, AVI, WEBM, MKV и другие.\n\n"
+            "Используйте /reset для смены режима."
+        )
+        keyboard = [
+            [
+                InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
+        
+    elif query.data == "mode_generator":
+        # Показываем подменю с выбором типа поста
+        message = (
+            "✍️ **Режим: Генерация поста**\n\n"
+            "Выберите тип поста:"
+        )
+        keyboard = [
+            [
+                InlineKeyboardButton("📝 Пост для вебинара", callback_data="post_webinar")
+            ],
+            [
+                InlineKeyboardButton("🎬 Пост для роликов на платформе", callback_data="post_videos")
+            ],
+            [
+                InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
+        
+    elif query.data == "post_webinar":
+        context.user_data['mode'] = 'generator'
+        context.user_data['post_type'] = 'webinar'
+        message = (
+            "📝 **Пост для вебинара**\n\n"
+            "Отправьте мне текст транскрибации или текстовый файл (.txt, .doc, .docx, .md),\n"
+            "и я создам из него контент для вебинара.\n\n"
+            "Используйте /reset для смены режима."
+        )
+        await query.edit_message_text(message, parse_mode='Markdown')
+        
+    elif query.data == "post_videos":
+        context.user_data['mode'] = 'generator'
+        context.user_data['post_type'] = 'videos'
+        message = (
+            "🎬 **Пост для роликов на платформе**\n\n"
+            "Отправьте мне текст транскрибации или текстовый файл (.txt, .doc, .docx, .md),\n"
+            "и я создам из него контент для роликов на платформе.\n\n"
+            "Используйте /reset для смены режима."
+        )
+        await query.edit_message_text(message, parse_mode='Markdown')
+        
+    elif query.data == "back_to_main":
+        # Возвращаемся к главному меню
+        context.user_data['mode'] = None
+        context.user_data['post_type'] = None
+        welcome_message = (
+            "👋 Привет! Я бот-помощник для работы.\n\n"
+            "Выберите функцию:\n\n"
+            "📹 **Конвертер** - конвертирует видео в MP4 1920x1080\n"
+            "✍️ **Генерация** - создает текст поста из транскрибации\n\n"
+            "Нажмите на кнопку ниже, чтобы начать:"
+        )
+        keyboard = [
+            [
+                InlineKeyboardButton("📹 Конвертер", callback_data="mode_converter"),
+                InlineKeyboardButton("✍️ Генерация", callback_data="mode_generator")
+            ]
+        ]
+        
+        # Добавляем кнопку загрузки видео через WebApp, если URL настроен
+        if VIDEO_WEBAPP_URL:
+            keyboard.append([
+                InlineKeyboardButton("🎬 Загрузить видео", web_app=WebAppInfo(url=VIDEO_WEBAPP_URL))
+            ])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(welcome_message, reply_markup=reply_markup, parse_mode='Markdown')
+
+
+async def _process_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE, video_obj, file_name=None, source_type="video"):
+    """
+    Общая функция для обработки видео файлов
+    Работает как с message.video, так и с message.document (MIME video/*)
+    
+    Args:
+        update: Update объект
+        context: Context объект
+        video_obj: Объект Video или Document с видео
+        file_name: Имя файла (для документов)
+        source_type: Тип источника ("video" или "document")
+    """
+    logger.info(f"📹 Начало обработки видео (источник: {source_type})")
+    
+    # Автоматически устанавливаем режим конвертера
+    if context.user_data.get('mode') != 'converter':
+        context.user_data['mode'] = 'converter'
+        logger.info("✅ Автоматически установлен режим 'converter'")
+    
+    try:
+        if not video_obj:
+            logger.error("❌ Не удалось получить объект видео")
+            await update.message.reply_text("❌ Не удалось получить видео файл")
+            return
+        
+        # Получаем информацию о файле
+        file_id = video_obj.file_id
+        file_size = getattr(video_obj, 'file_size', None)
+        mime_type = getattr(video_obj, 'mime_type', None)
+        
+        logger.info(f"📊 Информация о файле: ID={file_id}, Размер={file_size / 1024 / 1024:.2f}MB" if file_size else f"📊 Информация о файле: ID={file_id}, Размер=неизвестен")
+        logger.info(f"📋 MIME тип: {mime_type}, Имя файла: {file_name}")
+        
+        # Проверяем размер файла
+        # Логируем информацию о лимитах
+        max_size_gb = MAX_DOWNLOAD_SIZE / 1024 / 1024 / 1024
+        api_type = "локальный" if TELEGRAM_LOCAL_API_URL else "стандартный"
+        logger.info(f"📏 Лимиты: MAX_DOWNLOAD_SIZE={max_size_gb:.2f}GB, используется {api_type} Bot API")
+        
+        if file_size:
+            size_gb = file_size / 1024 / 1024 / 1024
+            logger.info(f"📏 Размер файла: {size_gb:.2f}GB, максимальный: {max_size_gb:.2f}GB")
+            
+            if file_size > MAX_DOWNLOAD_SIZE:
+                local_api_text = ""
+                if not TELEGRAM_LOCAL_API_URL:
+                    local_api_text = (
+                        "3. **Использование локального Bot API:**\n"
+                        "   • Поднимите локальный Bot API сервер для работы с файлами до 2GB\n\n"
+                    )
+                
+                logger.warning(f"⚠️ Файл слишком большой: {size_gb:.2f}GB > {max_size_gb:.2f}GB")
+                await update.message.reply_text(
+                    f"❌ Файл слишком большой для скачивания.\n\n"
+                    f"📊 Размер файла: {size_gb:.2f}GB\n"
+                    f"⚠️ Максимальный размер для скачивания: {max_size_gb:.2f}GB\n\n"
+                    f"💡 **Альтернативные решения:**\n\n"
+                    f"1. **Использование облачных хранилищ:**\n"
+                    f"   • Загрузите видео в Google Drive/Dropbox\n"
+                    f"   • Отправьте прямую ссылку на видео файл\n\n"
+                    f"2. **Сжатие видео:**\n"
+                    f"   • Используйте видеоредактор для сжатия\n"
+                    f"   • Или отправьте ссылку на видео файл\n\n"
+                    f"{local_api_text}"
+                    f"ℹ️ **Важно:** Для файлов больше {max_size_gb:.2f}GB используйте конвертацию по ссылке."
+                )
+                return
+            else:
+                logger.info(f"✅ Размер файла в пределах лимита: {size_gb:.2f}GB <= {max_size_gb:.2f}GB")
+        else:
+            logger.info("⚠️ Размер файла не указан, продолжаем обработку (попробуем скачать)")
+        
+        # Отправляем сообщение о начале обработки
+        status_message = await update.message.reply_text("⏳ Начинаю конвертацию видео...")
+        logger.info("⏳ Отправлено сообщение о начале обработки")
+        
+        # Определяем расширение файла
+        file_extension = 'mp4'
+        if file_name:
+            file_extension = Path(file_name).suffix.lower().lstrip('.') or 'mp4'
+            logger.info(f"📝 Расширение из имени файла: {file_extension}")
+        elif mime_type:
+            # Пытаемся определить по MIME типу
+            mime_to_ext = {
+                'video/mp4': 'mp4',
+                'video/quicktime': 'mov',
+                'video/x-msvideo': 'avi',
+                'video/webm': 'webm',
+                'video/x-matroska': 'mkv'
+            }
+            file_extension = mime_to_ext.get(mime_type, 'mp4')
+            logger.info(f"📝 Расширение из MIME типа: {file_extension}")
+        
+        # Скачиваем файл через локальный Bot API (если настроен) или стандартный API
+        logger.info(f"⬇️ Начинаю скачивание файла через {'локальный' if TELEGRAM_LOCAL_API_URL else 'стандартный'} Bot API")
+        try:
+            file = await context.bot.get_file(file_id)
+            file_path = f"downloads/{file_id}.{file_extension}"
+            
+            # Создаем директорию, если её нет
+            os.makedirs("downloads", exist_ok=True)
+            
+            # Пытаемся использовать file_path, если файл большой
+            if hasattr(file, 'file_path') and file.file_path:
+                logger.info(f"📂 Используется file_path для скачивания: {file.file_path}")
+            
+            await file.download_to_drive(file_path)
+            downloaded_size = os.path.getsize(file_path)
+            logger.info(f"✅ Файл успешно скачан: {downloaded_size / 1024 / 1024:.2f}MB -> {file_path}")
+        except Exception as download_error:
+            error_msg = str(download_error).lower()
+            logger.error(f"❌ Ошибка при скачивании файла: {download_error}")
+            if 'too big' in error_msg or 'file is too big' in error_msg:
+                await status_message.edit_text(
+                    f"❌ Файл слишком большой для скачивания.\n\n"
+                    f"📊 Размер файла: {file_size / 1024 / 1024 / 1024:.2f}GB (если доступен)\n"
+                    f"⚠️ Максимальный размер: 2GB\n\n"
+                    f"💡 **Альтернативные решения:**\n\n"
+                    f"1. **Использование облачных хранилищ:**\n"
+                    f"   • Загрузите видео в Google Drive/Dropbox\n"
+                    f"   • Отправьте прямую ссылку на видео файл\n\n"
+                    f"2. **Сжатие видео:**\n"
+                    f"   • Используйте видеоредактор для сжатия\n"
+                    f"   • Или отправьте ссылку на видео файл\n\n"
+                    f"ℹ️ **Важно:** Для файлов больше 2GB используйте конвертацию по ссылке."
+                )
+                return
+            else:
+                raise  # Пробрасываем другие ошибки
+        
+        # Обновляем статус
+        await status_message.edit_text("🔄 Конвертирую видео в MP4 1920x1080...")
+        logger.info("🔄 Начинаю конвертацию через FFmpeg")
+        
+        # Конвертируем видео
+        output_path = await convert_video_to_mp4(file_path, file_id)
+        
+        if output_path and os.path.exists(output_path):
+            # Проверяем размер результата перед отправкой
+            output_size = os.path.getsize(output_path)
+            logger.info(f"✅ Конвертация завершена: {output_size / 1024 / 1024:.2f}MB -> {output_path}")
+            
+            if output_size > MAX_UPLOAD_SIZE:
+                # Результат слишком большой для отправки
+                logger.warning(f"⚠️ Результат слишком большой для отправки: {output_size / 1024 / 1024:.1f}MB > {MAX_UPLOAD_SIZE / 1024 / 1024:.0f}MB")
+                await status_message.edit_text(
+                    f"✅ Видео успешно сконвертировано!\n\n"
+                    f"❌ Но результат слишком большой для отправки через бота.\n\n"
+                    f"📊 Размер результата: {output_size / 1024 / 1024:.1f}MB\n"
+                    f"⚠️ Максимальный размер для отправки: {MAX_UPLOAD_SIZE / 1024 / 1024:.0f}MB\n\n"
+                    f"💡 **Решения:**\n\n"
+                    f"1. Отправьте ссылку на видео файл для конвертации\n"
+                    f"2. Используйте локальный Bot API сервер для работы с большими файлами"
+                )
+                # Удаляем временные файлы
+                try:
+                    os.remove(file_path)
+                    os.remove(output_path)
+                    logger.info("🗑️ Временные файлы удалены")
+                except:
+                    pass
+                return
+            
+            # Отправляем конвертированное видео
+            await status_message.edit_text("✅ Видео успешно сконвертировано! Отправляю...")
+            logger.info("📤 Начинаю отправку сконвертированного видео")
+            
+            try:
+                with open(output_path, 'rb') as video_file:
+                    await update.message.reply_video(
+                        video=video_file,
+                        caption="✅ Видео сконвертировано в MP4 1920x1080"
+                    )
+                logger.info("✅ Видео успешно отправлено пользователю")
+            except Exception as send_error:
+                error_msg = str(send_error).lower()
+                logger.error(f"❌ Ошибка при отправке видео: {send_error}")
+                if 'too big' in error_msg or 'file is too big' in error_msg:
+                    await status_message.edit_text(
+                        f"✅ Видео успешно сконвертировано!\n\n"
+                        f"❌ Но результат слишком большой для отправки через бота.\n\n"
+                        f"📊 Размер результата: {output_size / 1024 / 1024:.1f}MB\n"
+                        f"⚠️ Максимальный размер для отправки: {MAX_UPLOAD_SIZE / 1024 / 1024:.0f}MB\n\n"
+                        f"💡 **Решения:**\n\n"
+                        f"1. Отправьте ссылку на видео файл для конвертации\n"
+                        f"2. Используйте локальный Bot API сервер для работы с большими файлами"
+                    )
+                else:
+                    raise  # Пробрасываем другие ошибки
+            
+            # Удаляем временные файлы
+            try:
+                os.remove(file_path)
+                os.remove(output_path)
+                logger.info("🗑️ Временные файлы удалены")
+            except Exception as cleanup_error:
+                logger.warning(f"⚠️ Ошибка при удалении временных файлов: {cleanup_error}")
+            
+            await status_message.delete()
+            
+            # Отправляем кнопку меню после успешной конвертации
+            keyboard = [
+                [
+                    InlineKeyboardButton("📹 Конвертер", callback_data="mode_converter"),
+                    InlineKeyboardButton("✍️ Генерация", callback_data="mode_generator")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(
+                "✅ Готово! Что дальше?",
+                reply_markup=reply_markup
+            )
+            logger.info("✅ Обработка видео завершена успешно")
+        else:
+            logger.error("❌ Не удалось сконвертировать видео")
+            await status_message.edit_text(
+                "❌ Не удалось сконвертировать видео 😔\n\n"
+                "💡 **Возможные причины:**\n"
+                "• Неподдерживаемый формат видео\n"
+                "• Поврежденный файл\n"
+                "• Недостаточно места на диске\n"
+                "• Ошибка FFmpeg\n\n"
+                "Попробуйте другой файл или другой формат."
+            )
+            
+            # Удаляем входной файл при ошибке
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+            except:
+                pass
+            
+            # Отправляем кнопку меню даже при ошибке
+            keyboard = [
+                [
+                    InlineKeyboardButton("📹 Конвертер", callback_data="mode_converter"),
+                    InlineKeyboardButton("✍️ Генерация", callback_data="mode_generator")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text("Что дальше?", reply_markup=reply_markup)
+            
+    except Exception as e:
+        logger.error(f"❌ Критическая ошибка при обработке видео: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Произошла ошибка при обработке видео: {str(e)}")
+
+
+async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик видео файлов (message.video)"""
+    logger.info("📹 Получено видео через message.video")
+    video = update.message.video
+    if not video:
+        logger.error("❌ Не удалось получить video объект из update.message.video")
+        await update.message.reply_text("❌ Не удалось получить видео файл")
+        return
+    
+    await _process_video_file(update, context, video, source_type="video")
+
+
+async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик данных из Telegram Web App
+    Обрабатывает загрузку видео через Web App
+    """
+    logger.info("📤 Получены данные из WebApp")
+    
+    try:
+        if not update.effective_message or not update.effective_message.web_app_data:
+            logger.error("❌ WebApp данные не найдены в сообщении")
+            if update.effective_message:
+                await update.effective_message.reply_text("❌ Ошибка: данные из WebApp не получены")
+            return
+        
+        # Получаем данные из WebApp
+        web_app_data = update.effective_message.web_app_data.data
+        logger.info(f"📋 Получены данные WebApp: {web_app_data[:200]}...")  # Логируем первые 200 символов
+        
+        # Парсим JSON
+        import json
+        try:
+            data = json.loads(web_app_data)
+            logger.info(f"✅ JSON распарсен: type={data.get('type')}, url={data.get('video_url', 'N/A')[:50]}...")
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ Ошибка парсинга JSON из WebApp: {e}")
+            await update.message.reply_text("❌ Ошибка: неверный формат данных из WebApp")
+            return
+        
+        # Проверяем тип данных
+        if data.get('type') == 'uploaded' and data.get('video_url'):
+            video_url = data.get('video_url')
+            logger.info(f"✅ Видео успешно загружено: {video_url}")
+            
+            # Отправляем сообщение пользователю
+            await update.effective_message.reply_text(
+                f"✅ **Ваше видео успешно загружено!**\n\n"
+                f"🔗 **Прямая ссылка:**\n{video_url}",
+                parse_mode='Markdown'
+            )
+            
+            # Отправляем кнопку меню
+            keyboard = [
+                [
+                    InlineKeyboardButton("📹 Конвертер", callback_data="mode_converter"),
+                    InlineKeyboardButton("✍️ Генерация", callback_data="mode_generator")
+                ]
+            ]
+            if VIDEO_WEBAPP_URL:
+                keyboard.append([
+                    InlineKeyboardButton("🎬 Загрузить видео", web_app=WebAppInfo(url=VIDEO_WEBAPP_URL))
+                ])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.effective_message.reply_text("Что дальше?", reply_markup=reply_markup)
+        elif data.get('video_url'):
+            # Если просто video_url без type
+            video_url = data.get('video_url')
+            logger.info(f"✅ Видео успешно загружено: {video_url}")
+            
+            await update.effective_message.reply_text(
+                f"✅ **Видео успешно загружено!**\n\n"
+                f"🔗 **Прямая ссылка:**\n{video_url}",
+                parse_mode='Markdown'
+            )
+            
+            # Отправляем кнопку меню
+            keyboard = [
+                [
+                    InlineKeyboardButton("📹 Конвертер", callback_data="mode_converter"),
+                    InlineKeyboardButton("✍️ Генерация", callback_data="mode_generator")
+                ]
+            ]
+            if VIDEO_WEBAPP_URL:
+                keyboard.append([
+                    InlineKeyboardButton("🎬 Загрузить видео", web_app=WebAppInfo(url=VIDEO_WEBAPP_URL))
+                ])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.effective_message.reply_text("Что дальше?", reply_markup=reply_markup)
+        else:
+            logger.warning(f"⚠️ Неожиданный формат данных WebApp: {data}")
+            await update.effective_message.reply_text(
+                f"⚠️ Получены данные из WebApp, но формат не распознан.\n\n"
+                f"Тип: {data.get('type', 'не указан')}\n"
+                f"URL: {data.get('video_url', 'не указан')}"
+            )
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка при обработке данных WebApp: {e}", exc_info=True)
+        if update.effective_message:
+            await update.effective_message.reply_text(f"❌ Произошла ошибка при обработке данных из WebApp: {str(e)}")
+
+
+async def handle_video_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик конвертации видео по URL"""
+    try:
+        url = update.message.text.strip()
+        
+        # Проверяем, что это похоже на URL
+        if not (url.startswith('http://') or url.startswith('https://')):
+            await update.message.reply_text(
+                "❌ Это не похоже на валидную ссылку. Отправьте прямую ссылку на видео файл.\n\n"
+                "Пример: https://example.com/video.mp4"
+            )
+            return
+        
+        status_message = await update.message.reply_text("⏳ Скачиваю видео по ссылке...")
+        
+        # Скачиваем видео по ссылке
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                response = await client.get(url, follow_redirects=True)
+                response.raise_for_status()
+                
+                # Определяем расширение файла из URL или Content-Type
+                file_extension = 'mp4'
+                if '.' in url.split('/')[-1]:
+                    file_extension = url.split('.')[-1].split('?')[0].lower()
+                
+                # Проверяем Content-Type
+                content_type = response.headers.get('content-type', '').lower()
+                if 'video' in content_type:
+                    if 'mp4' in content_type:
+                        file_extension = 'mp4'
+                    elif 'quicktime' in content_type or 'mov' in content_type:
+                        file_extension = 'mov'
+                    elif 'webm' in content_type:
+                        file_extension = 'webm'
+                    elif 'x-matroska' in content_type or 'mkv' in content_type:
+                        file_extension = 'mkv'
+                
+                # Проверяем, что это действительно видео файл
+                content_type = response.headers.get('content-type', '').lower()
+                content_length = response.headers.get('content-length')
+                
+                # Проверяем размер файла (минимум 1MB для видео)
+                if content_length:
+                    content_length_int = int(content_length)
+                    if content_length_int < 1024 * 1024:  # Меньше 1MB
+                        await status_message.edit_text(
+                            "❌ Скачанный файл слишком маленький для видео.\n\n"
+                            f"📊 Размер: {content_length_int / 1024:.1f}KB\n"
+                            "⚠️ Возможно, это не прямая ссылка на видео файл.\n\n"
+                            "💡 **Как получить прямую ссылку:**\n"
+                            "• Яндекс.Диск: используйте прямую ссылку на файл (не на страницу)\n"
+                            "• Google Drive: используйте прямую ссылку для скачивания\n"
+                            "• Другие сервисы: убедитесь, что ссылка ведет напрямую к файлу, а не к странице"
+                        )
+                        return
+                
+                # Сохраняем файл
+                file_id = f"url_{hash(url) % 1000000}"
+                file_path = f"downloads/{file_id}.{file_extension}"
+                
+                # Создаем директорию, если её нет
+                os.makedirs("downloads", exist_ok=True)
+                
+                with open(file_path, 'wb') as f:
+                    f.write(response.content)
+                
+                file_size = os.path.getsize(file_path)
+                logger.info(f"Файл скачан по ссылке: {file_size / 1024 / 1024:.2f}MB, Content-Type: {content_type}")
+                
+                # Проверяем размер после скачивания
+                if file_size < 1024 * 1024:  # Меньше 1MB
+                    await status_message.edit_text(
+                        "❌ Скачанный файл слишком маленький для видео.\n\n"
+                        f"📊 Размер: {file_size / 1024:.1f}KB\n"
+                        "⚠️ Возможно, это не прямая ссылка на видео файл, а HTML страница.\n\n"
+                        "💡 **Как получить прямую ссылку:**\n"
+                        "• Яндекс.Диск: используйте прямую ссылку на файл (не на страницу)\n"
+                        "• Google Drive: используйте прямую ссылку для скачивания\n"
+                        "• Другие сервисы: убедитесь, что ссылка ведет напрямую к файлу"
+                    )
+                    try:
+                        os.remove(file_path)
+                    except:
+                        pass
+                    return
+                
+                # Проверяем, что это не HTML файл
+                if file_size < 10 * 1024 * 1024:  # Для файлов меньше 10MB проверяем содержимое
+                    try:
+                        with open(file_path, 'rb') as f:
+                            first_bytes = f.read(512)
+                            # Проверяем, не является ли это HTML
+                            if b'<html' in first_bytes.lower() or b'<!doctype' in first_bytes.lower():
+                                await status_message.edit_text(
+                                    "❌ Скачанный файл является HTML страницей, а не видео файлом.\n\n"
+                                    "⚠️ Ссылка ведет на страницу, а не на прямой файл.\n\n"
+                                    "💡 **Как получить прямую ссылку:**\n"
+                                    "• Яндекс.Диск: используйте прямую ссылку на файл\n"
+                                    "• Google Drive: используйте прямую ссылку для скачивания\n"
+                                    "• Другие сервисы: убедитесь, что ссылка ведет напрямую к файлу"
+                                )
+                                try:
+                                    os.remove(file_path)
+                                except:
+                                    pass
+                                return
+                    except:
+                        pass
+                
+        except httpx.TimeoutException:
+            await status_message.edit_text(
+                "❌ Превышено время ожидания при скачивании файла.\n\n"
+                "Попробуйте:\n"
+                "• Проверить доступность ссылки\n"
+                "• Использовать более быструю ссылку\n"
+                "• Отправить видео напрямую"
+            )
+            return
+        except Exception as download_error:
+            logger.error(f"Ошибка при скачивании видео по ссылке: {download_error}")
+            await status_message.edit_text(
+                f"❌ Ошибка при скачивании видео:\n{str(download_error)}\n\n"
+                "Проверьте, что ссылка:\n"
+                "• Доступна и не требует авторизации\n"
+                "• Ведет напрямую к видео файлу\n"
+                "• Не требует специальных заголовков"
+            )
+            return
+        
+        # Обновляем статус
+        await status_message.edit_text("🔄 Конвертирую видео в MP4 1920x1080...")
+        
+        # Проверяем файл перед конвертацией через ffprobe
+        try:
+            import subprocess
+            from video_converter import FFMPEG_PATH as VIDEO_FFMPEG_PATH
+            
+            # Определяем путь к ffprobe
+            if VIDEO_FFMPEG_PATH != 'ffmpeg' and os.path.exists(VIDEO_FFMPEG_PATH):
+                # Если указан путь к ffmpeg, используем ffprobe из той же папки
+                if VIDEO_FFMPEG_PATH.endswith('.exe'):
+                    ffprobe_path = VIDEO_FFMPEG_PATH.replace('ffmpeg.exe', 'ffprobe.exe')
+                else:
+                    ffprobe_path = VIDEO_FFMPEG_PATH.replace('ffmpeg', 'ffprobe')
+            else:
+                ffprobe_path = 'ffprobe'
+            
+            # Быстрая проверка через ffprobe
+            probe_result = subprocess.run(
+                [ffprobe_path, '-v', 'error', '-show_entries', 'format=format_name', file_path],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if probe_result.returncode != 0:
+                error_msg = probe_result.stderr[:200] if probe_result.stderr else "Неизвестная ошибка"
+                await status_message.edit_text(
+                    f"❌ Файл не является валидным видео файлом.\n\n"
+                    f"⚠️ Ошибка: {error_msg}\n\n"
+                    f"💡 **Возможные причины:**\n"
+                    f"• Ссылка ведет на HTML страницу, а не на файл\n"
+                    f"• Файл поврежден\n"
+                    f"• Неподдерживаемый формат\n\n"
+                    f"**Как получить прямую ссылку:**\n"
+                    f"• Яндекс.Диск: используйте прямую ссылку на файл\n"
+                    f"• Google Drive: используйте прямую ссылку для скачивания"
+                )
+                try:
+                    os.remove(file_path)
+                except:
+                    pass
+                return
+        except FileNotFoundError:
+            logger.warning("ffprobe не найден, пропускаем проверку")
+            # Продолжаем, если ffprobe не найден
+        except Exception as probe_error:
+            logger.warning(f"Не удалось проверить файл через ffprobe: {probe_error}")
+            # Продолжаем, если проверка не удалась
+        
+        # Конвертируем видео
+        output_path = await convert_video_to_mp4(file_path, file_id)
+        
+        if output_path and os.path.exists(output_path):
+            # Проверяем размер результата перед отправкой
+            output_size = os.path.getsize(output_path)
+            
+            if output_size > MAX_UPLOAD_SIZE:
+                await status_message.edit_text(
+                    f"✅ Видео успешно сконвертировано!\n\n"
+                    f"❌ Но результат слишком большой для отправки через бота.\n\n"
+                    f"📊 Размер результата: {output_size / 1024 / 1024:.1f}MB\n"
+                    f"⚠️ Максимальный размер для отправки: {MAX_UPLOAD_SIZE / 1024 / 1024:.0f}MB\n\n"
+                    f"💡 Используйте локальный Bot API сервер для работы с большими файлами."
+                )
+                # Удаляем временные файлы
+                try:
+                    os.remove(file_path)
+                    os.remove(output_path)
+                except:
+                    pass
+                return
+            
+            # Отправляем конвертированное видео
+            await status_message.edit_text("✅ Видео успешно сконвертировано! Отправляю...")
+            
+            try:
+                with open(output_path, 'rb') as video_file:
+                    await update.message.reply_video(
+                        video=video_file,
+                        caption="✅ Видео сконвертировано в MP4 1920x1080"
+                    )
+            except Exception as send_error:
+                error_msg = str(send_error).lower()
+                if 'too big' in error_msg or 'file is too big' in error_msg:
+                    await status_message.edit_text(
+                        f"✅ Видео успешно сконвертировано!\n\n"
+                        f"❌ Но результат слишком большой для отправки через бота.\n\n"
+                        f"📊 Размер результата: {output_size / 1024 / 1024:.1f}MB\n"
+                        f"⚠️ Максимальный размер для отправки: {MAX_UPLOAD_SIZE / 1024 / 1024:.0f}MB\n\n"
+                        f"💡 Используйте локальный Bot API сервер для работы с большими файлами."
+                    )
+                else:
+                    raise  # Пробрасываем другие ошибки
+            
+            # Удаляем временные файлы
+            try:
+                os.remove(file_path)
+                os.remove(output_path)
+            except Exception as cleanup_error:
+                logger.warning(f"Ошибка при удалении временных файлов: {cleanup_error}")
+            
+            await status_message.delete()
+            
+            # Отправляем кнопку меню после успешной конвертации
+            keyboard = [
+                [
+                    InlineKeyboardButton("📹 Конвертер", callback_data="mode_converter"),
+                    InlineKeyboardButton("✍️ Генерация", callback_data="mode_generator")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(
+                "✅ Готово! Что дальше?",
+                reply_markup=reply_markup
+            )
+        else:
+            await status_message.edit_text(
+                "❌ Не удалось сконвертировать видео 😔\n\n"
+                "💡 **Возможные причины:**\n"
+                "• Неподдерживаемый формат видео\n"
+                "• Поврежденный файл\n"
+                "• Недостаточно места на диске\n"
+                "• Ошибка FFmpeg\n\n"
+                "Попробуйте другой файл или другой формат."
+            )
+            
+            # Удаляем входной файл при ошибке
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+            except:
+                pass
+            
+            # Отправляем кнопку меню даже при ошибке
+            keyboard = [
+                [
+                    InlineKeyboardButton("📹 Конвертер", callback_data="mode_converter"),
+                    InlineKeyboardButton("✍️ Генерация", callback_data="mode_generator")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text("Что дальше?", reply_markup=reply_markup)
+            
+    except Exception as e:
+        logger.error(f"Ошибка при конвертации по URL: {e}")
+        await update.message.reply_text(f"❌ Произошла ошибка: {str(e)}")
+
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик текстовых сообщений"""
+    text = update.message.text.strip()
+    
+    # Проверяем, является ли текст URL (начинается с http:// или https://)
+    is_url = text.startswith('http://') or text.startswith('https://')
+    
+    # Если режим конвертера выбран или текст похож на URL, обрабатываем как URL для конвертации
+    if context.user_data.get('mode') == 'converter' or is_url:
+        if is_url:
+            # Автоматически устанавливаем режим конвертера, если не установлен
+            if context.user_data.get('mode') != 'converter':
+                context.user_data['mode'] = 'converter'
+            await handle_video_url(update, context)
+            return
+        else:
+            # Режим конвертера, но не URL - просим отправить видео или ссылку
+            await update.message.reply_text(
+                "📹 **Режим: Конвертер**\n\n"
+                "Отправьте мне:\n"
+                "• 📹 **Видео** (до 2GB) - отправьте как видео, не как файл\n"
+                "• 🔗 **Ссылку на видео** - прямая ссылка на видео файл\n\n"
+                "Используйте /reset для смены режима."
+            )
+            return
+    
+    # Проверяем, выбран ли режим генератора и тип поста
+    if context.user_data.get('mode') != 'generator' or not context.user_data.get('post_type'):
+        # Показываем кнопки выбора типа поста
+        message = "⚠️ Сначала выберите тип поста:"
+        keyboard = [
+            [
+                InlineKeyboardButton("📝 Пост для вебинара", callback_data="post_webinar")
+            ],
+            [
+                InlineKeyboardButton("🎬 Пост для роликов на платформе", callback_data="post_videos")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(message, reply_markup=reply_markup)
+        return
+    
+    try:
+        text = update.message.text
+        
+        if not text or len(text.strip()) < 10:
+            await update.message.reply_text("❌ Текст слишком короткий. Отправьте более подробный текст.")
+            return
+        
+        # Определяем какой ассистент использовать
+        post_type = context.user_data.get('post_type', 'webinar')
+        if post_type == 'videos':
+            assistant_id = GPT_ASSISTANT_ID_VIDEOS
+            if not assistant_id:
+                await update.message.reply_text("❌ GPT_ASSISTANT_ID_VIDEOS не установлен в .env файле")
+                return
+            status_message = await update.message.reply_text("⏳ Обрабатываю транскрибацию для роликов на платформе...")
+        else:
+            assistant_id = GPT_ASSISTANT_ID
+            if not assistant_id:
+                await update.message.reply_text("❌ GPT_ASSISTANT_ID не установлен в .env файле")
+                return
+            status_message = await update.message.reply_text("⏳ Обрабатываю транскрибацию для вебинара...")
+        
+        # Генерируем контент через GPT ассистента
+        content_parts = await generate_post_from_transcription(text, assistant_id)
+        
+        if not content_parts:
+            await status_message.edit_text("❌ Не удалось сгенерировать контент. Проверьте настройки GPT_ASSISTANT_ID в .env")
+            return
+        
+        await status_message.edit_text("✅ Контент готов! Отправляю...")
+        await status_message.delete()
+        
+        # Проверяем тип поста
+        post_type = context.user_data.get('post_type', 'webinar')
+        
+        if post_type == 'videos':
+            # Для роликов отправляем одним сообщением с отступами и выделением подтем
+            formatted_text = _format_videos_post(content_parts)
+            await update.message.reply_text(
+                formatted_text,
+                parse_mode='Markdown'
+            )
+        else:
+            # Для вебинаров отправляем 4 отдельных сообщения
+            # 1. Название вебинара
+            if content_parts.get('webinar_name'):
+                await update.message.reply_text(
+                    content_parts['webinar_name'],
+                    parse_mode='Markdown'
+                )
+            else:
+                await update.message.reply_text("(название вебинара не указано)")
+            
+            await asyncio.sleep(0.5)  # Небольшая задержка между сообщениями
+            
+            # 2. Описание
+            if content_parts.get('description'):
+                await update.message.reply_text(
+                    content_parts['description'],
+                    parse_mode='Markdown'
+                )
+            else:
+                await update.message.reply_text("(описание не указано)")
+            
+            await asyncio.sleep(0.5)
+            
+            # 3. Тайм-код
+            if content_parts.get('timestamps'):
+                await update.message.reply_text(
+                    content_parts['timestamps'],
+                    parse_mode='Markdown'
+                )
+            else:
+                await update.message.reply_text("(тайм-код не указан)")
+            
+            await asyncio.sleep(0.5)
+            
+            # 4. Пост для телеграм
+            if content_parts.get('post'):
+                await update.message.reply_text(
+                    content_parts['post'],
+                    parse_mode='Markdown'
+                )
+            else:
+                await update.message.reply_text("(пост не указан)")
+        
+        # Отправляем кнопку меню после генерации поста
+        if post_type == 'videos':
+            # Если это был пост для роликов, показываем меню выбора типа поста
+            keyboard = [
+                [
+                    InlineKeyboardButton("📝 Пост для вебинара", callback_data="post_webinar")
+                ],
+                [
+                    InlineKeyboardButton("🎬 Пост для роликов на платформе", callback_data="post_videos")
+                ],
+                [
+                    InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
+                ]
+            ]
+            message = "✅ Пост для роликов готов! Что дальше?"
+        else:
+            # Если это был пост для вебинара, показываем меню выбора типа поста
+            keyboard = [
+                [
+                    InlineKeyboardButton("📝 Пост для вебинара", callback_data="post_webinar")
+                ],
+                [
+                    InlineKeyboardButton("🎬 Пост для роликов на платформе", callback_data="post_videos")
+                ],
+                [
+                    InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
+                ]
+            ]
+            message = "✅ Пост для вебинара готов! Что дальше?"
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(message, reply_markup=reply_markup)
+            
+    except Exception as e:
+        logger.error(f"Ошибка при обработке текста: {e}")
+        await update.message.reply_text(f"❌ Произошла ошибка: {str(e)}")
+        
+        # Отправляем кнопку меню даже при ошибке
+        keyboard = [
+            [
+                InlineKeyboardButton("📝 Пост для вебинара", callback_data="post_webinar")
+            ],
+            [
+                InlineKeyboardButton("🎬 Пост для роликов на платформе", callback_data="post_videos")
+            ],
+            [
+                InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "❌ Что-то пошло не так. Попробуйте еще раз:",
+            reply_markup=reply_markup
+        )
+
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик документов (текстовые файлы для генерации поста И видео документы с MIME video/*)"""
+    logger.info("📄 Получен документ")
+    try:
+        document = update.message.document
+        
+        if not document:
+            logger.warning("⚠️ Документ не найден в сообщении")
+            return
+        
+        file_name = document.file_name or ""
+        mime_type = document.mime_type or ""
+        logger.info(f"📋 Документ: имя={file_name}, MIME={mime_type}")
+        
+        # Проверяем, является ли это видео файлом (MIME video/*)
+        is_video = False
+        if mime_type.startswith('video/'):
+            is_video = True
+            logger.info(f"✅ Обнаружен видео документ по MIME типу: {mime_type}")
+        else:
+            # Проверяем по расширению файла
+            video_extensions = ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.flv', '.wmv', '.m4v', '.3gp']
+            file_ext = Path(file_name).suffix.lower() if file_name else ""
+            if file_ext in video_extensions:
+                is_video = True
+                logger.info(f"✅ Обнаружен видео документ по расширению: {file_ext}")
+        
+        if is_video:
+            # Это видео файл, отправленный как документ - обрабатываем как видео
+            logger.info("📹 Обрабатываю видео документ")
+            await _process_video_file(update, context, document, file_name=file_name, source_type="document")
+            return
+        
+        # Показываем кнопки, если режим не выбран
+        keyboard = [
+            [
+                InlineKeyboardButton("📹 Конвертер", callback_data="mode_converter"),
+                InlineKeyboardButton("✍️ Генерация", callback_data="mode_generator")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Проверяем, является ли это текстовым файлом
+        text_extensions = ['.txt', '.doc', '.docx', '.md']
+        if file_ext in text_extensions:
+            # Текстовый файл - нужен режим генератора и тип поста
+            if context.user_data.get('mode') != 'generator' or not context.user_data.get('post_type'):
+                message = "⚠️ Для обработки текстового файла выберите тип поста:"
+                keyboard = [
+                    [
+                        InlineKeyboardButton("📝 Пост для вебинара", callback_data="post_webinar")
+                    ],
+                    [
+                        InlineKeyboardButton("🎬 Пост для роликов на платформе", callback_data="post_videos")
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text(message, reply_markup=reply_markup)
+                return
+            # Это текстовый файл - обрабатываем для генерации поста
+            status_message = await update.message.reply_text("⏳ Читаю файл и генерирую текст для поста...")
+            
+            # Скачиваем файл
+            file = await context.bot.get_file(document.file_id)
+            file_path = f"downloads/{document.file_id}{file_ext}"
+            await file.download_to_drive(file_path)
+            
+            # Читаем текст из файла
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+            except UnicodeDecodeError:
+                # Пробуем другие кодировки
+                with open(file_path, 'r', encoding='cp1251') as f:
+                    text = f.read()
+            
+            if not text or len(text.strip()) < 10:
+                await status_message.edit_text("❌ Файл слишком короткий или пустой")
+                os.remove(file_path)
+                return
+            
+            # Определяем какой ассистент использовать
+            post_type = context.user_data.get('post_type', 'webinar')
+            if post_type == 'videos':
+                assistant_id = GPT_ASSISTANT_ID_VIDEOS
+                if not assistant_id:
+                    await status_message.edit_text("❌ GPT_ASSISTANT_ID_VIDEOS не установлен в .env файле")
+                    os.remove(file_path)
+                    return
+            else:
+                assistant_id = GPT_ASSISTANT_ID
+                if not assistant_id:
+                    await status_message.edit_text("❌ GPT_ASSISTANT_ID не установлен в .env файле")
+                    os.remove(file_path)
+                    return
+            
+            # Генерируем контент через GPT ассистента
+            content_parts = await generate_post_from_transcription(text, assistant_id)
+            
+            if not content_parts:
+                await status_message.edit_text("❌ Не удалось сгенерировать контент. Проверьте настройки ассистента в .env")
+                os.remove(file_path)
+                
+                # Отправляем кнопку меню при ошибке
+                keyboard = [
+                    [
+                        InlineKeyboardButton("📝 Пост для вебинара", callback_data="post_webinar")
+                    ],
+                    [
+                        InlineKeyboardButton("🎬 Пост для роликов на платформе", callback_data="post_videos")
+                    ],
+                    [
+                        InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text(
+                    "❌ Что-то пошло не так. Попробуйте еще раз:",
+                    reply_markup=reply_markup
+                )
+                return
+            
+            await status_message.edit_text("✅ Контент готов! Отправляю...")
+            await status_message.delete()
+            
+            # Проверяем тип поста
+            post_type = context.user_data.get('post_type', 'webinar')
+            
+            if post_type == 'videos':
+                # Для роликов отправляем одним сообщением с отступами и выделением подтем
+                formatted_text = _format_videos_post(content_parts)
+                await update.message.reply_text(
+                    formatted_text,
+                    parse_mode='Markdown'
+                )
+            else:
+                # Для вебинаров отправляем 4 отдельных сообщения
+                # 1. Название вебинара
+                if content_parts.get('webinar_name'):
+                    await update.message.reply_text(
+                        content_parts['webinar_name'],
+                        parse_mode='Markdown'
+                    )
+                else:
+                    await update.message.reply_text("(название вебинара не указано)")
+                
+                await asyncio.sleep(0.5)  # Небольшая задержка между сообщениями
+                
+                # 2. Описание
+                if content_parts.get('description'):
+                    await update.message.reply_text(
+                        content_parts['description'],
+                        parse_mode='Markdown'
+                    )
+                else:
+                    await update.message.reply_text("(описание не указано)")
+                
+                await asyncio.sleep(0.5)
+                
+                # 3. Тайм-код
+                if content_parts.get('timestamps'):
+                    await update.message.reply_text(
+                        content_parts['timestamps'],
+                        parse_mode='Markdown'
+                    )
+                else:
+                    await update.message.reply_text("(тайм-код не указан)")
+                
+                await asyncio.sleep(0.5)
+                
+                # 4. Пост для телеграм
+                if content_parts.get('post'):
+                    await update.message.reply_text(
+                        content_parts['post'],
+                        parse_mode='Markdown'
+                    )
+                else:
+                    await update.message.reply_text("(пост не указан)")
+            
+            # Отправляем кнопку меню после генерации поста из файла
+            if post_type == 'videos':
+                keyboard = [
+                    [
+                        InlineKeyboardButton("📝 Пост для вебинара", callback_data="post_webinar")
+                    ],
+                    [
+                        InlineKeyboardButton("🎬 Пост для роликов на платформе", callback_data="post_videos")
+                    ],
+                    [
+                        InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
+                    ]
+                ]
+                message = "✅ Пост для роликов готов! Что дальше?"
+            else:
+                keyboard = [
+                    [
+                        InlineKeyboardButton("📝 Пост для вебинара", callback_data="post_webinar")
+                    ],
+                    [
+                        InlineKeyboardButton("🎬 Пост для роликов на платформе", callback_data="post_videos")
+                    ],
+                    [
+                        InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
+                    ]
+                ]
+                message = "✅ Пост для вебинара готов! Что дальше?"
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(message, reply_markup=reply_markup)
+                
+            # Удаляем временный файл
+            os.remove(file_path)
+        else:
+            # Это может быть видео - пробуем обработать как видео
+            if document.mime_type and 'video' in document.mime_type:
+                # Видео файл - нужен режим конвертера с методом file
+                if context.user_data.get('mode') != 'converter' or context.user_data.get('convert_method') != 'file':
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("📎 Отправить файл", callback_data="convert_file"),
+                            InlineKeyboardButton("🔗 По ссылке", callback_data="convert_url")
+                        ],
+                        [
+                            InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")
+                        ]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    await update.message.reply_text(
+                        "⚠️ Для конвертации видео выберите способ:",
+                        reply_markup=reply_markup
+                    )
+                    return
+                await handle_video(update, context)
+            else:
+                await update.message.reply_text(
+                    "❌ Неподдерживаемый тип файла. Отправьте видео или текстовый файл (.txt, .doc, .docx, .md)\n\n"
+                    "Выберите режим работы:",
+                    reply_markup=reply_markup
+                )
+                
+    except Exception as e:
+        logger.error(f"Ошибка при обработке документа: {e}")
+        await update.message.reply_text(f"❌ Произошла ошибка: {str(e)}")
+
+
+def check_ffmpeg():
+    """Проверяет наличие FFmpeg в системе"""
+    import subprocess
+    import shutil
+    
+    # Сначала проверяем переменную окружения FFMPEG_PATH
+    custom_ffmpeg_path = os.getenv('FFMPEG_PATH')
+    if custom_ffmpeg_path and os.path.exists(custom_ffmpeg_path):
+        try:
+            result = subprocess.run(
+                [custom_ffmpeg_path, '-version'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                logger.info(f"FFmpeg найден через FFMPEG_PATH: {custom_ffmpeg_path}")
+                print(f"✅ FFmpeg найден через переменную FFMPEG_PATH: {custom_ffmpeg_path}")
+                return True
+        except Exception as e:
+            logger.warning(f"FFmpeg по пути {custom_ffmpeg_path} не работает: {e}")
+    
+    # Проверяем через shutil.which (более надежно)
+    ffmpeg_path = shutil.which('ffmpeg')
+    if ffmpeg_path:
+        try:
+            result = subprocess.run(
+                ['ffmpeg', '-version'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                logger.info(f"FFmpeg найден в PATH: {ffmpeg_path}")
+                return True
+        except Exception as e:
+            logger.warning(f"FFmpeg найден, но не работает: {e}")
+    
+    # Пробуем найти в стандартных местах Windows
+    common_paths = [
+        r'C:\ffmpeg\bin\ffmpeg.exe',
+        r'C:\Program Files\ffmpeg\bin\ffmpeg.exe',
+        r'C:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe',
+        r'D:\ffmpeg\bin\ffmpeg.exe',
+        r'D:\tools\ffmpeg\bin\ffmpeg.exe',
+    ]
+    
+    for path in common_paths:
+        if os.path.exists(path):
+            try:
+                result = subprocess.run(
+                    [path, '-version'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    logger.info(f"FFmpeg найден по пути: {path}")
+                    print(f"✅ FFmpeg найден: {path}")
+                    print("⚠️  Но он не в PATH. Добавьте эту папку в переменную PATH для удобства.")
+                    return True
+            except Exception:
+                continue
+    
+    # Если не нашли
+    logger.error("FFmpeg не найден")
+    return False
+
+
+def main():
+    """Основная функция запуска бота"""
+    # Проверяем наличие FFmpeg
+    ffmpeg_found = check_ffmpeg()
+    if not ffmpeg_found:
+        logger.warning("FFmpeg не найден. Конвертация видео может не работать.")
+        print("\n⚠️  ВНИМАНИЕ: FFmpeg не найден!")
+        print("   Конвертация видео будет недоступна до установки FFmpeg.")
+        print("\n📖 Инструкция по установке:")
+        print("   См. файл: FFMPEG_INSTALL_WINDOWS.md")
+        print("   Или: https://www.gyan.dev/ffmpeg/builds/")
+        print("\n💡 Важно после установки:")
+        print("   1. Добавьте путь к папке 'bin' в переменную PATH")
+        print("   2. ЗАКРОЙТЕ и откройте заново этот терминал/IDE")
+        print("   3. Перезапустите бота")
+        print("\n   Бот продолжит работу, но функция конвертации видео будет недоступна.\n")
+    
+    # Проверяем наличие токена
+    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "your_telegram_bot_token_here":
+        print("❌ ОШИБКА: TELEGRAM_BOT_TOKEN не установлен!")
+        print("   Создайте файл .env и добавьте туда ваш токен от @BotFather")
+        return
+    
+    try:
+        # Создаем приложение с увеличенными таймаутами
+        from telegram.request import HTTPXRequest
+        import re
+        
+        # Проверяем наличие прокси (если Telegram заблокирован)
+        proxy_url = os.getenv('TELEGRAM_PROXY_URL')  # Например: http://proxy.example.com:8080
+        
+        # Создаем кастомный request с увеличенными таймаутами
+        request_kwargs = {
+            'connect_timeout': 30.0,
+            'read_timeout': 30.0,
+            'write_timeout': 30.0
+        }
+        
+        # Добавляем прокси, если указан
+        if proxy_url:
+            request_kwargs['proxy_url'] = proxy_url
+            logger.info(f"Используется прокси: {proxy_url}")
+        
+        # Если используется локальный Bot API, настраиваем базовый URL
+        if TELEGRAM_LOCAL_API_URL:
+            from urllib.parse import urlparse
+            
+            # Получаем и очищаем URL из .env
+            base_url_raw = TELEGRAM_LOCAL_API_URL.strip()
+            logger.info(f"Исходный TELEGRAM_LOCAL_API_URL из .env: '{base_url_raw}'")
+            
+            # Используем urlparse для правильного парсинга URL
+            try:
+                # Сначала убираем всё после host:port (если есть путь)
+                if '://' in base_url_raw:
+                    scheme_part, rest = base_url_raw.split('://', 1)
+                    # Убираем путь после host:port
+                    if '/' in rest:
+                        rest = rest.split('/')[0]  # Берем только host:port
+                    base_url_raw = f"{scheme_part}://{rest}"
+                
+                # Парсим URL
+                parsed = urlparse(base_url_raw)
+                
+                # Извлекаем компоненты
+                scheme = parsed.scheme or 'http'
+                
+                # Получаем host и port из netloc
+                if parsed.netloc:
+                    netloc = parsed.netloc
+                    if ':' in netloc:
+                        # Разделяем host и port
+                        host, port_str = netloc.rsplit(':', 1)
+                        # Проверяем, что port - это только цифры
+                        if port_str.isdigit():
+                            port = int(port_str)
+                        else:
+                            # Если порт содержит не только цифры, берем только цифры
+                            port_digits = ''.join(filter(str.isdigit, port_str))
+                            port = int(port_digits) if port_digits else 8081
+                    else:
+                        host = netloc
+                        port = 8081
+                elif parsed.hostname:
+                    host = parsed.hostname
+                    port = parsed.port if parsed.port else 8081
+                else:
+                    raise ValueError(f"Не удалось извлечь host из URL: {base_url_raw}")
+                
+                # Формируем чистый base_url
+                base_url = f"{scheme}://{host}:{port}"
+                
+            except Exception as e:
+                logger.error(f"Ошибка парсинга URL '{base_url_raw}': {e}")
+                # Fallback: простая очистка вручную
+                base_url_clean = base_url_raw
+                
+                # Убираем всё после первого слэша
+                if '/' in base_url_clean and base_url_clean.count('/') > 2:
+                    # Если есть путь после host:port
+                    if '://' in base_url_clean:
+                        scheme_part, rest = base_url_clean.split('://', 1)
+                        host_port = rest.split('/')[0]
+                        base_url_clean = f"{scheme_part}://{host_port}"
+                
+                # Убираем query параметры
+                if '?' in base_url_clean:
+                    base_url_clean = base_url_clean.split('?')[0]
+                
+                # Добавляем http:// если нет схемы
+                if not base_url_clean.startswith('http://') and not base_url_clean.startswith('https://'):
+                    base_url_clean = f'http://{base_url_clean}'
+                
+                # Извлекаем host:port
+                if '://' in base_url_clean:
+                    scheme_part = base_url_clean.split('://')[0]
+                    rest = base_url_clean.split('://')[1]
+                    
+                    # Ищем host:port (порт только цифры)
+                    match = re.match(r'^([^:]+):(\d{1,5})', rest)
+                    if match:
+                        host = match.group(1)
+                        port = match.group(2)
+                        base_url = f"{scheme_part}://{host}:{port}"
+                    else:
+                        # Если нет порта, добавляем стандартный
+                        host = rest.split('/')[0].split(':')[0]
+                        base_url = f"{scheme_part}://{host}:8081"
+                else:
+                    base_url = f"http://{base_url_clean}:8081"
+            
+            # Финальная проверка формата
+            if not re.match(r'^https?://[^:/]+:\d{1,5}$', base_url):
+                error_msg = (
+                    f"Неправильный формат TELEGRAM_LOCAL_API_URL после обработки.\n"
+                    f"Ожидается: http://host:port (например: http://72.56.73.219:8081)\n"
+                    f"Получено из .env: '{TELEGRAM_LOCAL_API_URL}'\n"
+                    f"Обработано как: '{base_url}'"
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            
+            # Финальная проверка: убеждаемся, что base_url не содержит токен
+            if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN in base_url:
+                error_msg = (
+                    f"ОШИБКА: Токен бота обнаружен в base_url!\n"
+                    f"base_url: '{base_url}'\n"
+                    f"Это недопустимо. Проверьте файл .env - возможно, токен попал в TELEGRAM_LOCAL_API_URL."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            
+            logger.info(f"Используется локальный Bot API: {base_url}")
+            
+            # ВАЖНО: base_url должен заканчиваться на /bot и НЕ содержать токен
+            # Формат: http://host:port/bot
+            # Токен передается отдельно через .token()
+            base_url_with_bot = f"{base_url}/bot"
+            
+            # Финальная проверка: убеждаемся, что base_url не содержит токен
+            if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN in base_url_with_bot:
+                error_msg = (
+                    f"ОШИБКА: Токен бота обнаружен в base_url!\n"
+                    f"base_url: '{base_url}'\n"
+                    f"base_url_with_bot: '{base_url_with_bot}'\n"
+                    f"Проверьте файл .env - возможно, токен попал в TELEGRAM_LOCAL_API_URL."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            
+            logger.info(f"base_url для Application.builder(): '{base_url_with_bot}'")
+            logger.info(f"Токен передается отдельно через .token() (не в base_url)")
+            
+            # Создаем request (БЕЗ base_url, так как он передается в builder)
+            request = HTTPXRequest(**request_kwargs)
+            
+            # Используем base_url в builder
+            # base_url должен быть: http://host:port/bot (БЕЗ токена!)
+            # Токен передается ТОЛЬКО через .token(), а НЕ в base_url
+            application = Application.builder()\
+                .token(TELEGRAM_BOT_TOKEN)\
+                .base_url(base_url_with_bot)\
+                .request(request)\
+                .build()
+        else:
+            logger.info("Используется стандартный Telegram Bot API")
+            request = HTTPXRequest(**request_kwargs)
+            application = Application.builder().token(TELEGRAM_BOT_TOKEN).request(request).build()
+        
+        # Регистрируем обработчики
+        # Обработчик кнопок должен быть первым
+        application.add_handler(CallbackQueryHandler(button_handler))
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("reset", reset_mode))
+        # Обработчик видео - только для конвертации (до 2GB)
+        application.add_handler(MessageHandler(filters.VIDEO, handle_video))
+        # Обработчик документов - только для текстовых файлов (генерация поста)
+        # Видео файлы, отправленные как документы, будут обработаны в handle_document с просьбой отправить как видео
+        application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+        # Обработчик текста - для генерации поста и конвертации по ссылке
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+        # Обработчик данных из WebApp
+        application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
+        
+        # Запускаем бота
+        logger.info("Попытка подключения к Telegram API...")
+        print("🔄 Подключаюсь к Telegram...")
+        application.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True
+        )
+        
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Ошибка при запуске бота: {error_msg}")
+        
+        if "TimedOut" in error_msg or "ConnectTimeout" in error_msg:
+            print("\n❌ ОШИБКА ПОДКЛЮЧЕНИЯ:")
+            print("   Не удалось подключиться к серверам Telegram.")
+            print("\n🔍 Возможные причины:")
+            print("   1. Проблемы с интернет-соединением")
+            print("   2. Telegram заблокирован в вашем регионе (нужен VPN/прокси)")
+            print("   3. Файрвол блокирует подключение")
+            print("   4. Проблемы на стороне серверов Telegram")
+            print("\n💡 Решения:")
+            print("   - Проверьте интернет-соединение")
+            print("   - Попробуйте использовать VPN")
+            print("   - Проверьте настройки файрвола/антивируса")
+            print("   - Попробуйте запустить позже")
+        elif "Unauthorized" in error_msg or "401" in error_msg:
+            print("\n❌ ОШИБКА АВТОРИЗАЦИИ:")
+            print("   Неверный токен бота!")
+            print("   Проверьте TELEGRAM_BOT_TOKEN в файле .env")
+            print("   Получите новый токен у @BotFather в Telegram")
+        else:
+            print(f"\n❌ ОШИБКА: {error_msg}")
+            print("   Проверьте логи выше для подробностей")
+        
+        raise
+
+
+if __name__ == '__main__':
+    main()
+
