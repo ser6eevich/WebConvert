@@ -939,7 +939,7 @@ async def files_list():
             
             <div class="header-actions">
                 <a href="/upload" class="btn btn-primary">⬆️ Загрузить видео</a>
-                <a href="/files" class="btn btn-secondary">📁 Все файлы</a>
+                <a href="/converted" class="btn btn-secondary">🎬 Сконвертированные</a>
                 <button type="button" class="btn btn-secondary" onclick="loadVideosList()">🔄 Обновить</button>
             </div>
             
@@ -1328,6 +1328,74 @@ async def converted_list():
                 text-transform: uppercase;
                 letter-spacing: 0.5px;
             }
+            /* Модальное окно */
+            .modal {
+                display: none;
+                position: fixed;
+                z-index: 1000;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: 100%;
+                background-color: rgba(0, 0, 0, 0.7);
+                backdrop-filter: blur(4px);
+            }
+            .modal.show {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .modal-content {
+                background: #2c2c2c;
+                border-radius: 20px;
+                padding: 30px;
+                max-width: 400px;
+                width: 90%;
+                border: 1px solid rgba(139, 92, 246, 0.3);
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            }
+            .modal-title {
+                font-size: 20px;
+                font-weight: 600;
+                color: #ffffff;
+                margin-bottom: 15px;
+            }
+            .modal-text {
+                color: #e0e0e0;
+                margin-bottom: 25px;
+                line-height: 1.5;
+            }
+            .modal-actions {
+                display: flex;
+                gap: 12px;
+                justify-content: flex-end;
+            }
+            .modal-btn {
+                padding: 12px 24px;
+                border: none;
+                border-radius: 12px;
+                font-size: 14px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.3s ease;
+            }
+            .modal-btn-cancel {
+                background: rgba(139, 92, 246, 0.2);
+                color: #a78bfa;
+                border: 1px solid rgba(139, 92, 246, 0.4);
+            }
+            .modal-btn-cancel:hover {
+                background: rgba(139, 92, 246, 0.3);
+            }
+            .modal-btn-confirm {
+                background: #ef4444;
+                color: #ffffff;
+            }
+            .modal-btn-confirm:hover {
+                background: #dc2626;
+                transform: translateY(-2px);
+                box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);
+            }
         </style>
     </head>
     <body>
@@ -1341,6 +1409,18 @@ async def converted_list():
             </div>
             
             <div class="message" id="message"></div>
+            
+            <!-- Модальное окно подтверждения удаления -->
+            <div class="modal" id="deleteModal">
+                <div class="modal-content">
+                    <div class="modal-title">🗑️ Удаление файла</div>
+                    <div class="modal-text" id="modalText">Вы уверены, что хотите удалить этот файл? Это действие нельзя отменить.</div>
+                    <div class="modal-actions">
+                        <button type="button" class="modal-btn modal-btn-cancel" onclick="closeDeleteModal()">Отмена</button>
+                        <button type="button" class="modal-btn modal-btn-confirm" id="confirmDeleteBtn">Удалить</button>
+                    </div>
+                </div>
+            </div>
             
             <div class="stats" id="stats" style="display: none;">
                 <div class="stat-item">
@@ -1481,6 +1561,71 @@ async def converted_list():
                 div.textContent = text;
                 return div.innerHTML;
             }
+
+            // Модальное окно для удаления
+            let fileToDelete = null;
+            
+            function showDeleteModal(filename) {
+                fileToDelete = filename;
+                const modal = document.getElementById('deleteModal');
+                const modalText = document.getElementById('modalText');
+                modalText.textContent = `Вы уверены, что хотите удалить файл "${filename}"? Это действие нельзя отменить.`;
+                modal.classList.add('show');
+            }
+            
+            function closeDeleteModal() {
+                const modal = document.getElementById('deleteModal');
+                modal.classList.remove('show');
+                fileToDelete = null;
+            }
+            
+            // Удаление видео
+            async function deleteVideo(filename) {
+                showDeleteModal(filename);
+            }
+            
+            // Подтверждение удаления
+            async function confirmDelete() {
+                if (!fileToDelete) return;
+                
+                const filename = fileToDelete;
+                closeDeleteModal();
+                
+                try {
+                    const response = await fetch(`/api/converted/${encodeURIComponent(filename)}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    if (response.ok) {
+                        showMessage(`✅ Файл ${filename} успешно удален!`, 'success');
+                        // Обновляем список после удаления
+                        setTimeout(() => loadVideosList(), 1000);
+                    } else {
+                        const error = await response.json();
+                        showMessage(`❌ Ошибка при удалении: ${error.detail || 'Неизвестная ошибка'}`, 'error');
+                    }
+                } catch (error) {
+                    showMessage(`❌ Ошибка при удалении: ${escapeHtml(error.message)}`, 'error');
+                }
+            }
+            
+            // Привязываем кнопку подтверждения
+            document.addEventListener('DOMContentLoaded', function() {
+                const confirmBtn = document.getElementById('confirmDeleteBtn');
+                if (confirmBtn) {
+                    confirmBtn.addEventListener('click', confirmDelete);
+                }
+                
+                // Закрытие модального окна при клике вне его
+                const modal = document.getElementById('deleteModal');
+                if (modal) {
+                    modal.addEventListener('click', function(e) {
+                        if (e.target === modal) {
+                            closeDeleteModal();
+                        }
+                    });
+                }
+            });
 
             // Загружаем список при загрузке страницы
             loadVideosList();
