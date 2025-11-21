@@ -425,24 +425,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 video_url = f"{public_base_url}/videos/{filename}"
                 logger.info(f"🔍 Восстановлен URL: {video_url}")
                 
-                # Сохраняем информацию о выбранном видео в user_data
-                context.user_data['selected_video'] = filename
-                context.user_data['selected_video_url'] = video_url
-                context.user_data['waiting_for_filename'] = True
-                context.user_data['conversion_type'] = 'from_upload'
-                context.user_data['conversion_status_message'] = query.message
-                context.user_data['conversion_user_id'] = query.from_user.id
-                context.user_data['conversion_chat_id'] = query.message.chat_id
-                
-                # Спрашиваем как назвать сконвертированный файл
                 await safe_edit_text(query.message,
-                    f"Выбрано видео: {filename}\n\n"
-                    f"Как назвать сконвертированный файл?\n\n"
-                    f"Отправьте название (без расширения) или нажмите /skip для автоматического названия.",
+                    f"Начинаю конвертацию загруженного видео...\n\n"
+                    f"Файл: {filename}",
                     reply_markup=get_main_menu_keyboard()
                 )
                 
-                logger.info(f"✅ Запрошено имя файла для конвертации: {filename}")
+                # Запускаем конвертацию в фоне с автоматическим именем
+                user_id = query.from_user.id
+                chat_id = query.message.chat_id
+                
+                logger.info(f"🔍 Параметры конвертации: user_id={user_id}, chat_id={chat_id}, video_url={video_url}")
+                
+                # Запускаем конвертацию в фоновой задаче
+                logger.info(f"🔍 Создаю фоновую задачу для конвертации...")
+                asyncio.create_task(
+                    _convert_uploaded_video_background(
+                        video_url=video_url,
+                        filename=filename,
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        status_message=query.message,
+                        custom_output_name=None  # Автоматическое имя
+                    )
+                )
+                
+                logger.info(f"✅ Конвертация запущена в фоне для загруженного файла: {filename}")
             else:
                 logger.error(f"❌ Неверный формат callback_data: {query.data}, parts: {parts}")
                 await safe_edit_text(query.message,
@@ -450,9 +458,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=get_main_menu_keyboard()
                 )
         except Exception as e:
-            logger.error(f"❌ Ошибка при обработке запроса на конвертацию: {e}", exc_info=True)
+            logger.error(f"❌ Ошибка при запуске конвертации загруженного видео: {e}", exc_info=True)
             await safe_edit_text(query.message,
-                f"Ошибка при обработке запроса:\n{str(e)}",
+                f"Ошибка при запуске конвертации:\n{str(e)}",
                 reply_markup=get_main_menu_keyboard()
             )
     
@@ -566,29 +574,38 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             filename = parts[1] if len(parts) > 1 else None
             
             if filename:
-                # Сохраняем выбранный файл в user_data
-                context.user_data['selected_video'] = filename
+                # Восстанавливаем URL из filename
+                public_base_url = os.getenv('PUBLIC_BASE_URL', 'https://example.com')
+                video_url = f"{public_base_url}/videos/{filename}"
                 
-                # Спрашиваем как назвать сконвертированный файл
                 await safe_edit_text(query.message,
-                    f"Выбрано видео: {filename}\n\n"
-                    f"Как назвать сконвертированный файл?\n\n"
-                    f"Отправьте название (без расширения) или нажмите /skip для автоматического названия.",
+                    f"Начинаю конвертацию видео...\n\n"
+                    f"Файл: {filename}",
                     reply_markup=get_main_menu_keyboard()
                 )
                 
-                # Устанавливаем режим ожидания имени файла
-                context.user_data['waiting_for_filename'] = True
-                context.user_data['conversion_type'] = 'from_upload'
+                # Запускаем конвертацию в фоне с автоматическим именем
+                asyncio.create_task(
+                    _convert_uploaded_video_background(
+                        video_url=video_url,
+                        filename=filename,
+                        user_id=query.from_user.id,
+                        chat_id=query.message.chat_id,
+                        status_message=query.message,
+                        custom_output_name=None  # Автоматическое имя
+                    )
+                )
+                
+                logger.info(f"✅ Конвертация запущена для файла из списка: {filename}")
             else:
                 await safe_edit_text(query.message,
-                    "❌ Ошибка: имя файла не указано",
+                    "Ошибка: имя файла не указано",
                     reply_markup=get_main_menu_keyboard()
                 )
         except Exception as e:
             logger.error(f"❌ Ошибка при выборе видео: {e}", exc_info=True)
             await safe_edit_text(query.message,
-                f"❌ Ошибка:\n{str(e)}",
+                f"Ошибка:\n{str(e)}",
                 reply_markup=get_main_menu_keyboard()
             )
 
