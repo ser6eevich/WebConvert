@@ -5,6 +5,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.error import MessageNotModified
 from video_converter import convert_video_to_mp4
 from text_generator import generate_post_from_transcription
 import httpx
@@ -25,6 +26,18 @@ logging.getLogger('httpx').setLevel(logging.WARNING)
 
 # Также отключаем избыточные логи от httpcore (низкоуровневая библиотека httpx)
 logging.getLogger('httpcore').setLevel(logging.WARNING)
+
+# Вспомогательная функция для безопасного редактирования сообщений
+async def safe_edit_text(message, text, **kwargs):
+    """Безопасно редактирует текст сообщения, игнорируя MessageNotModified"""
+    try:
+        await message.edit_text(text, **kwargs)
+    except MessageNotModified:
+        # Сообщение уже имеет такой же текст - это нормально, просто игнорируем
+        pass
+    except Exception as e:
+        logger.error(f"Ошибка при редактировании сообщения: {e}")
+        raise
 
 # Получаем токены из переменных окружения
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -429,7 +442,7 @@ async def _process_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE
             error_msg = str(download_error).lower()
             logger.error(f"❌ Ошибка при скачивании файла: {download_error}")
             if 'too big' in error_msg or 'file is too big' in error_msg:
-                await status_message.edit_text(
+                await safe_edit_text(status_message,
                     f"❌ Файл слишком большой для скачивания.\n\n"
                     f"📊 Размер файла: {file_size / 1024 / 1024 / 1024:.2f}GB (если доступен)\n"
                     f"⚠️ Максимальный размер: 2GB\n\n"

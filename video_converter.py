@@ -298,15 +298,19 @@ def _convert_video_sync(input_path: str, output_path: str):
         # Создаем пайплайн FFmpeg
         # Для WEBM файлов (VP8, VP9) FFmpeg автоматически декодирует их
         # FFmpeg поддерживает WEBM из коробки, никаких дополнительных настроек не требуется
-        stream = ffmpeg.input(input_path)
+        input_stream = ffmpeg.input(input_path)
+        
+        # Получаем видео и аудио потоки отдельно
+        video_stream = input_stream['v']  # Явно указываем видео поток
+        audio_stream = input_stream['a']  # Аудио поток (если есть)
         
         # Масштабируем и добавляем черные полосы (letterbox/pillarbox) если нужно
         if new_width != target_width or new_height != target_height:
-            # Сначала масштабируем
-            stream = ffmpeg.filter(stream, 'scale', new_width, new_height)
+            # Сначала масштабируем видео
+            video_stream = ffmpeg.filter(video_stream, 'scale', new_width, new_height)
             # Затем добавляем паддинг для достижения точного размера 1920x1080
-            stream = ffmpeg.filter(
-                stream,
+            video_stream = ffmpeg.filter(
+                video_stream,
                 'pad',
                 target_width,
                 target_height,
@@ -315,8 +319,8 @@ def _convert_video_sync(input_path: str, output_path: str):
                 color='black'
             )
         else:
-            # Просто масштабируем до нужного размера
-            stream = ffmpeg.filter(stream, 'scale', target_width, target_height)
+            # Просто масштабируем видео до нужного размера
+            video_stream = ffmpeg.filter(video_stream, 'scale', target_width, target_height)
         
         # Определяем аппаратное ускорение (если включено)
         hw_accel = None
@@ -411,7 +415,14 @@ def _convert_video_sync(input_path: str, output_path: str):
         # Логируем используемые настройки перед компиляцией
         logger.info(f"⚙️ Настройки конвертации: codec={video_codec}, preset={FFMPEG_PRESET if video_codec == 'libx264' else hw_output_options.get('preset', 'N/A')}")
         
-        stream = ffmpeg.output(stream, output_path, **output_kwargs)
+        # Создаем выходной поток с явным маппингом видео и аудио
+        # Используем video_stream для видео и audio_stream для аудио (если есть)
+        try:
+            # Пытаемся включить аудио, если оно есть
+            stream = ffmpeg.output(video_stream, audio_stream, output_path, **output_kwargs)
+        except:
+            # Если аудио нет, используем только видео
+            stream = ffmpeg.output(video_stream, output_path, **output_kwargs)
         
         # Запускаем конвертацию с отслеживанием прогресса
         # Используем subprocess для чтения stderr в реальном времени
@@ -515,9 +526,19 @@ def _convert_video_sync(input_path: str, output_path: str):
         
         # Проверяем код возврата
         if process.returncode != 0:
-            stderr_output = ''.join(stderr_lines[-20:])  # Последние 20 строк
+            # Берем весь stderr для логирования
+            stderr_output = ''.join(stderr_lines)
             logger.error(f"FFmpeg завершился с ошибкой (код {process.returncode})")
-            raise RuntimeError(f"FFmpeg ошибка: {stderr_output[:500]}")
+            logger.error(f"Полный stderr FFmpeg:\n{stderr_output}")
+            
+            # Для исключения берем хвост (последние 4000 символов), где обычно находится реальная ошибка
+            MAX_LEN = 4000
+            if len(stderr_output) > MAX_LEN:
+                trimmed = stderr_output[-MAX_LEN:]  # Берем хвост
+            else:
+                trimmed = stderr_output
+            
+            raise RuntimeError(f"FFmpeg ошибка:\n{trimmed}")
         
         if error_occurred:
             logger.warning("В процессе конвертации были обнаружены предупреждения")
@@ -526,17 +547,24 @@ def _convert_video_sync(input_path: str, output_path: str):
         
     except ffmpeg.Error as e:
         stderr_output = e.stderr.decode('utf-8', errors='ignore') if e.stderr else str(e)
-        logger.error(f"FFmpeg ошибка: {stderr_output}")
+        logger.error(f"FFmpeg ошибка (полный stderr):\n{stderr_output}")
+        
+        # Для исключения берем хвост (последние 4000 символов), где обычно находится реальная ошибка
+        MAX_LEN = 4000
+        if len(stderr_output) > MAX_LEN:
+            trimmed = stderr_output[-MAX_LEN:]  # Берем хвост
+        else:
+            trimmed = stderr_output
         
         # Более подробная информация об ошибке
         if 'codec' in stderr_output.lower():
-            raise ValueError("Неподдерживаемый кодек видео. Попробуйте другой формат.")
+            raise ValueError(f"Неподдерживаемый кодек видео. Попробуйте другой формат.\n{trimmed}")
         elif 'invalid' in stderr_output.lower() or 'no such file' in stderr_output.lower():
-            raise ValueError("Файл поврежден или не найден.")
+            raise ValueError(f"Файл поврежден или не найден.\n{trimmed}")
         elif 'permission' in stderr_output.lower():
-            raise PermissionError("Нет прав на запись в выходную директорию.")
+            raise PermissionError(f"Нет прав на запись в выходную директорию.\n{trimmed}")
         else:
-            raise RuntimeError(f"Ошибка FFmpeg: {stderr_output[:200]}")
+            raise RuntimeError(f"Ошибка FFmpeg:\n{trimmed}")
     except Exception as e:
         logger.error(f"Ошибка при синхронной конвертации: {e}", exc_info=True)
         raise
