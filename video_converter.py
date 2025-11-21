@@ -96,11 +96,33 @@ def _detect_hardware_acceleration(ffmpeg_path: str) -> dict:
         
         # NVIDIA NVENC (для GPU NVIDIA)
         if 'h264_nvenc' in encoders_output or 'hevc_nvenc' in encoders_output:
-            result['type'] = 'nvenc'
-            result['encoder'] = 'h264_nvenc'
-            result['available'] = True
-            logger.info("✅ Обнаружено аппаратное ускорение: NVIDIA NVENC")
-            return result
+            # Проверяем реальную доступность NVENC - пытаемся запустить тестовую команду
+            # Это нужно, потому что энкодер может быть в списке, но драйверы/библиотеки могут отсутствовать
+            try:
+                test_cmd = [
+                    ffmpeg_path, '-hide_banner', '-f', 'lavfi', '-i', 'testsrc=duration=0.1:size=320x240:rate=1',
+                    '-c:v', 'h264_nvenc', '-preset', 'fast', '-frames:v', '1',
+                    '-f', 'null', '-'
+                ]
+                test_process = subprocess.run(
+                    test_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                
+                # Если команда выполнилась успешно или ошибка не связана с загрузкой библиотеки
+                if test_process.returncode == 0 or 'Cannot load libnvidia-encode.so' not in test_process.stderr:
+                    result['type'] = 'nvenc'
+                    result['encoder'] = 'h264_nvenc'
+                    result['available'] = True
+                    logger.info("✅ Обнаружено аппаратное ускорение: NVIDIA NVENC (проверено реальным тестом)")
+                    return result
+                else:
+                    logger.warning("⚠️ NVENC найден в списке энкодеров, но libnvidia-encode.so недоступна (нет драйверов/GPU)")
+            except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
+                logger.warning(f"⚠️ Не удалось проверить реальную доступность NVENC: {e}")
+                # Не помечаем как доступный, если тест не прошел
         
         # Intel/AMD VAAPI (для Linux с Intel/AMD GPU)
         if 'h264_vaapi' in encoders_output:
@@ -166,17 +188,24 @@ async def convert_video_to_mp4(input_path: str, file_id: str) -> str:
         return None
 
 
-def _convert_video_sync(input_path: str, output_path: str):
+def _convert_video_sync(input_path: str, output_path: str, target_width: int = 1920, target_height: int = 1080,
+                        ffmpeg_path: str = None, ffprobe_path: str = None, force_cpu: bool = False):
     """
     Синхронная функция конвертации видео через FFmpeg
     
     Args:
         input_path: Путь к исходному видео
         output_path: Путь для сохранения результата
+        target_width: Целевая ширина (по умолчанию 1920)
+        target_height: Целевая высота (по умолчанию 1080)
+        ffmpeg_path: Путь к ffmpeg (если None, определяется автоматически)
+        ffprobe_path: Путь к ffprobe (если None, определяется автоматически)
+        force_cpu: Принудительно использовать CPU (libx264) вместо аппаратного ускорения
     """
     try:
-        # Получаем пути к ffmpeg и ffprobe
-        ffmpeg_path, ffprobe_path = _get_ffmpeg_paths()
+        # Получаем пути к ffmpeg и ffprobe (если не переданы)
+        if ffmpeg_path is None or ffprobe_path is None:
+            ffmpeg_path, ffprobe_path = _get_ffmpeg_paths()
         
         # Настраиваем пути для библиотеки ffmpeg-python
         if FFMPEG_PATH != 'ffmpeg' and os.path.exists(FFMPEG_PATH):
@@ -327,9 +356,13 @@ def _convert_video_sync(input_path: str, output_path: str):
         video_codec = 'libx264'
         hw_output_options = {}
         
-        logger.info(f"🔍 Настройки ускорения: FFMPEG_HWACCEL={FFMPEG_HWACCEL}, FFMPEG_PRESET={FFMPEG_PRESET}")
+        logger.info(f"🔍 Настройки ускорения: FFMPEG_HWACCEL={FFMPEG_HWACCEL}, FFMPEG_PRESET={FFMPEG_PRESET}, force_cpu={force_cpu}")
         
-        if FFMPEG_HWACCEL != 'none':
+        # Если force_cpu=True, принудительно используем CPU
+        if force_cpu:
+            video_codec = 'libx264'
+            logger.info("ℹ️ Принудительно используется программное кодирование (libx264)")
+        elif FFMPEG_HWACCEL != 'none':
             hw_accel = _detect_hardware_acceleration(ffmpeg_path)
             logger.info(f"🔍 Результат проверки ускорения: {hw_accel}")
             
@@ -530,6 +563,25 @@ def _convert_video_sync(input_path: str, output_path: str):
             stderr_output = ''.join(stderr_lines)
             logger.error(f"FFmpeg завершился с ошибкой (код {process.returncode})")
             logger.error(f"Полный stderr FFmpeg:\n{stderr_output}")
+            
+            # Проверяем, является ли это ошибкой NVENC (нет драйверов/библиотек)
+            nvenc_error_indicators = [
+                'Cannot load libnvidia-encode.so',
+                'Error while opening encoder',
+                'The minimum required Nvidia driver',
+                'libnvidia-encode'
+            ]
+            
+            is_nvenc_error = any(indicator in stderr_output for indicator in nvenc_error_indicators)
+            
+            # Если это ошибка NVENC и мы пытались использовать NVENC, переключаемся на libx264
+            if is_nvenc_error and video_codec == 'h264_nvenc':
+                logger.warning("⚠️ NVENC недоступен (нет драйверов/GPU), автоматически переключаюсь на libx264 (CPU)")
+                # Рекурсивно вызываем конвертацию с libx264
+                return _convert_video_sync(
+                    input_path, output_path, target_width, target_height,
+                    ffmpeg_path, ffprobe_path, force_cpu=True
+                )
             
             # Для исключения берем хвост (последние 4000 символов), где обычно находится реальная ошибка
             MAX_LEN = 4000
