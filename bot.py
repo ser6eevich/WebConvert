@@ -343,17 +343,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data.startswith("convert_uploaded:"):
         # Обработка кнопки "Да, конвертировать" для загруженного на сайт видео
         try:
-            # Формат: convert_uploaded:filename:video_url
-            parts = query.data.split(":", 2)
-            if len(parts) >= 3:
+            # Формат: convert_uploaded:filename (URL убран из callback_data из-за ограничения длины)
+            parts = query.data.split(":", 1)
+            if len(parts) >= 2:
                 filename = parts[1]
-                video_url = parts[2]
+                
+                # Восстанавливаем URL из filename
+                public_base_url = os.getenv('PUBLIC_BASE_URL', 'https://example.com')
+                video_url = f"{public_base_url}/videos/{filename}"
                 
                 await safe_edit_text(query.message,
                     f"🔄 Начинаю конвертацию загруженного видео...\n\n"
                     f"📁 Файл: `{filename}`\n"
                     f"🔗 Ссылка: {video_url}",
-                    parse_mode='Markdown'
+                    parse_mode='Markdown',
+                    reply_markup=get_main_menu_keyboard()
                 )
                 
                 # Запускаем конвертацию в фоне

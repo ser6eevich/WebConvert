@@ -634,10 +634,12 @@ async def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Fo
                     )
                     
                     # Создаем кнопки Да/Нет
+                    # Используем только filename в callback_data, так как URL может быть слишком длинным
+                    # URL будет восстановлен из filename при обработке callback
                     keyboard = {
                         "inline_keyboard": [
                             [
-                                {"text": "✅ Да, конвертировать", "callback_data": f"convert_uploaded:{unique_filename}:{video_url}"},
+                                {"text": "✅ Да, конвертировать", "callback_data": f"convert_uploaded:{unique_filename}"},
                                 {"text": "❌ Нет", "callback_data": f"skip_convert:{unique_filename}"}
                             ]
                         ]
@@ -659,10 +661,19 @@ async def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Fo
                     import asyncio
                     
                     def send_notification():
-                        data_json = json.dumps(data).encode('utf-8')
-                        req = urllib.request.Request(bot_api_url, data=data_json, headers={'Content-Type': 'application/json'})
-                        with urllib.request.urlopen(req, timeout=10) as response:
-                            return json.loads(response.read().decode('utf-8'))
+                        try:
+                            data_json = json.dumps(data).encode('utf-8')
+                            req = urllib.request.Request(bot_api_url, data=data_json, headers={'Content-Type': 'application/json'})
+                            with urllib.request.urlopen(req, timeout=10) as response:
+                                return json.loads(response.read().decode('utf-8'))
+                        except urllib.error.HTTPError as e:
+                            # Получаем детали ошибки
+                            error_body = e.read().decode('utf-8')
+                            logger.error(f"❌ HTTP Error {e.code}: {error_body}")
+                            return {'ok': False, 'error': error_body}
+                        except Exception as e:
+                            logger.error(f"❌ Ошибка при отправке уведомления: {e}")
+                            return {'ok': False, 'error': str(e)}
                     
                     # Выполняем в отдельном потоке
                     loop = asyncio.get_event_loop()
