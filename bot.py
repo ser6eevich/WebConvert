@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 from pathlib import Path
+from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -128,6 +129,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [
             InlineKeyboardButton("📹 Конвертер", callback_data="mode_converter"),
             InlineKeyboardButton("✍️ Генерация", callback_data="mode_generator")
+        ],
+        [
+            InlineKeyboardButton("🎬 Видео", callback_data="list_converted_videos")
         ]
     ]
     
@@ -251,25 +255,87 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
+    logger.info(f"🔍 Обработка callback: {query.data}")
+    
     if query.data == "mode_converter":
         context.user_data['mode'] = 'converter'
-        message = (
-            "📹 **Режим: Конвертер**\n\n"
-            "Отправьте мне:\n"
-            "• 📹 **Видео** (до 2GB) - отправьте как видео, не как файл\n"
-            "• 🔗 **Ссылку на видео** - прямая ссылка на видео файл\n\n"
-            "Я конвертирую его в MP4 1920x1080.\n\n"
-            "⚠️ **ВАЖНО:** Отправляйте видео как видео (через кнопку 'Видео'), а не как файл!\n\n"
-            "Поддерживаемые форматы: MP4, MOV, AVI, WEBM, MKV и другие.\n\n"
-            "Используйте /reset для смены режима."
-        )
-        keyboard = [
-            [
-                InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")
+        # Показываем список видео из папки upload
+        try:
+            import os
+            from pathlib import Path
+            
+            # Путь к папке upload (videos) в webapp
+            videos_dir = Path("webapp/videos")
+            if not videos_dir.exists():
+                videos_dir = Path("webapp/videos")
+            
+            video_files = []
+            if videos_dir.exists():
+                for file_path in videos_dir.iterdir():
+                    if file_path.is_file():
+                        ext = file_path.suffix.lower()
+                        if ext in ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.flv', '.wmv', '.m4v', '.3gp']:
+                            file_size = file_path.stat().st_size
+                            video_files.append({
+                                'name': file_path.name,
+                                'size': file_size,
+                                'path': str(file_path)
+                            })
+            
+            if video_files:
+                # Сортируем по имени
+                video_files.sort(key=lambda x: x['name'])
+                
+                message = "📹 **Выберите видео для конвертации:**\n\n"
+                keyboard = []
+                
+                # Показываем максимум 50 файлов (ограничение Telegram)
+                for i, video in enumerate(video_files[:50]):
+                    size_mb = video['size'] / 1024 / 1024
+                    button_text = f"📹 {video['name'][:30]}{'...' if len(video['name']) > 30 else ''} ({size_mb:.1f}MB)"
+                    keyboard.append([
+                        InlineKeyboardButton(button_text, callback_data=f"select_video:{video['name']}")
+                    ])
+                
+                keyboard.append([
+                    InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")
+                ])
+                
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
+            else:
+                message = (
+                    "📹 **Режим: Конвертер**\n\n"
+                    "В папке upload нет видео файлов.\n\n"
+                    "Отправьте мне:\n"
+                    "• 📹 **Видео** (до 2GB) - отправьте как видео, не как файл\n"
+                    "• 🔗 **Ссылку на видео** - прямая ссылка на видео файл\n\n"
+                    "Или загрузите видео через WebApp."
+                )
+                keyboard = [
+                    [
+                        InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"❌ Ошибка при получении списка видео: {e}", exc_info=True)
+            message = (
+                "📹 **Режим: Конвертер**\n\n"
+                "Отправьте мне:\n"
+                "• 📹 **Видео** (до 2GB) - отправьте как видео, не как файл\n"
+                "• 🔗 **Ссылку на видео** - прямая ссылка на видео файл\n\n"
+                "Я конвертирую его в MP4 1920x1080.\n\n"
+                "Используйте /reset для смены режима."
+            )
+            keyboard = [
+                [
+                    InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")
+                ]
             ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
         
     elif query.data == "mode_generator":
         # Показываем подменю с выбором типа поста
@@ -321,13 +387,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "👋 Привет! Я бот-помощник для работы.\n\n"
             "Выберите функцию:\n\n"
             "📹 **Конвертер** - конвертирует видео в MP4 1920x1080\n"
-            "✍️ **Генерация** - создает текст поста из транскрибации\n\n"
+            "✍️ **Генерация** - создает текст поста из транскрибации\n"
+            "🎬 **Видео** - список сконвертированных видео\n\n"
             "Нажмите на кнопку ниже, чтобы начать:"
         )
         keyboard = [
             [
                 InlineKeyboardButton("📹 Конвертер", callback_data="mode_converter"),
                 InlineKeyboardButton("✍️ Генерация", callback_data="mode_generator")
+            ],
+            [
+                InlineKeyboardButton("🎬 Видео", callback_data="list_converted_videos")
             ]
         ]
         
@@ -342,15 +412,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif query.data.startswith("convert_uploaded:"):
         # Обработка кнопки "Да, конвертировать" для загруженного на сайт видео
+        logger.info(f"🔍 Обработка convert_uploaded: {query.data}")
         try:
             # Формат: convert_uploaded:filename (URL убран из callback_data из-за ограничения длины)
             parts = query.data.split(":", 1)
+            logger.info(f"🔍 Разделил callback_data: {parts}")
             if len(parts) >= 2:
                 filename = parts[1]
+                logger.info(f"🔍 Извлечен filename: {filename}")
                 
                 # Восстанавливаем URL из filename
                 public_base_url = os.getenv('PUBLIC_BASE_URL', 'https://example.com')
                 video_url = f"{public_base_url}/videos/{filename}"
+                logger.info(f"🔍 Восстановлен URL: {video_url}")
                 
                 await safe_edit_text(query.message,
                     f"🔄 Начинаю конвертацию загруженного видео...\n\n"
@@ -366,6 +440,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 file_id_for_conversion = f"uploaded_{filename}"
                 conversion_key = (user_id, file_id_for_conversion)
                 
+                logger.info(f"🔍 Параметры конвертации: user_id={user_id}, chat_id={chat_id}, video_url={video_url}")
+                
                 # Сохраняем информацию о конвертации
                 active_conversions[conversion_key] = {
                     'status_message': query.message,
@@ -376,6 +452,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 }
                 
                 # Запускаем конвертацию в фоновой задаче
+                logger.info(f"🔍 Создаю фоновую задачу для конвертации...")
                 asyncio.create_task(
                     _convert_uploaded_video_background(
                         video_url=video_url,
@@ -387,6 +464,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 
                 logger.info(f"✅ Конвертация запущена в фоне для загруженного файла: {filename}")
+            else:
+                logger.error(f"❌ Неверный формат callback_data: {query.data}, parts: {parts}")
+                await safe_edit_text(query.message,
+                    f"❌ Ошибка: неверный формат данных",
+                    reply_markup=get_main_menu_keyboard()
+                )
         except Exception as e:
             logger.error(f"❌ Ошибка при запуске конвертации загруженного видео: {e}", exc_info=True)
             await safe_edit_text(query.message,
@@ -407,6 +490,130 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception as e:
             logger.error(f"❌ Ошибка при обработке отмены конвертации: {e}")
+    
+    elif query.data == "list_converted_videos":
+        # Показываем список сконвертированных видео
+        try:
+            from pathlib import Path
+            import os
+            
+            # Путь к папке converted в webapp
+            converted_dir = Path("webapp/converted")
+            if not converted_dir.exists():
+                converted_dir = Path("webapp/converted")
+            
+            video_files = []
+            if converted_dir.exists():
+                for file_path in converted_dir.iterdir():
+                    if file_path.is_file():
+                        ext = file_path.suffix.lower()
+                        if ext in ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.flv', '.wmv', '.m4v', '.3gp']:
+                            file_size = file_path.stat().st_size
+                            file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+                            video_files.append({
+                                'name': file_path.name,
+                                'size': file_size,
+                                'mtime': file_mtime
+                            })
+            
+            if video_files:
+                # Сортируем по дате (новые первыми)
+                video_files.sort(key=lambda x: x['mtime'], reverse=True)
+                
+                message = "🎬 **Сконвертированные видео:**\n\n"
+                keyboard = []
+                
+                # Показываем максимум 50 файлов
+                for i, video in enumerate(video_files[:50]):
+                    size_mb = video['size'] / 1024 / 1024
+                    date_str = video['mtime'].strftime("%d.%m.%Y %H:%M")
+                    button_text = f"🎬 {video['name'][:25]}{'...' if len(video['name']) > 25 else ''} ({size_mb:.1f}MB)"
+                    keyboard.append([
+                        InlineKeyboardButton(button_text, callback_data=f"get_video_link:{video['name']}")
+                    ])
+                
+                keyboard.append([
+                    InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")
+                ])
+                
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
+            else:
+                message = "🎬 **Сконвертированные видео:**\n\n📭 Пока нет сконвертированных видео."
+                keyboard = [
+                    [
+                        InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(message, reply_markup=reply_markup, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"❌ Ошибка при получении списка сконвертированных видео: {e}", exc_info=True)
+            await safe_edit_text(query.message,
+                f"❌ Ошибка при получении списка видео:\n{str(e)}",
+                reply_markup=get_main_menu_keyboard()
+            )
+    
+    elif query.data.startswith("get_video_link:"):
+        # Отправляем ссылку на выбранное видео
+        try:
+            parts = query.data.split(":", 1)
+            filename = parts[1] if len(parts) > 1 else None
+            
+            if filename:
+                public_base_url = os.getenv('PUBLIC_BASE_URL', 'https://example.com')
+                video_url = f"{public_base_url}/converted/{filename}"
+                
+                await safe_edit_text(query.message,
+                    f"🔗 **Ссылка на видео:**\n\n{video_url}",
+                    parse_mode='Markdown',
+                    reply_markup=get_main_menu_keyboard()
+                )
+            else:
+                await safe_edit_text(query.message,
+                    "❌ Ошибка: имя файла не указано",
+                    reply_markup=get_main_menu_keyboard()
+                )
+        except Exception as e:
+            logger.error(f"❌ Ошибка при получении ссылки на видео: {e}", exc_info=True)
+            await safe_edit_text(query.message,
+                f"❌ Ошибка:\n{str(e)}",
+                reply_markup=get_main_menu_keyboard()
+            )
+    
+    elif query.data.startswith("select_video:"):
+        # Обработка выбора видео для конвертации
+        try:
+            parts = query.data.split(":", 1)
+            filename = parts[1] if len(parts) > 1 else None
+            
+            if filename:
+                # Сохраняем выбранный файл в user_data
+                context.user_data['selected_video'] = filename
+                
+                # Спрашиваем как назвать сконвертированный файл
+                await safe_edit_text(query.message,
+                    f"📹 Выбрано видео: `{filename}`\n\n"
+                    f"📝 Как назвать сконвертированный файл?\n\n"
+                    f"Отправьте название (без расширения) или нажмите /skip для автоматического названия.",
+                    parse_mode='Markdown',
+                    reply_markup=get_main_menu_keyboard()
+                )
+                
+                # Устанавливаем режим ожидания имени файла
+                context.user_data['waiting_for_filename'] = True
+                context.user_data['conversion_type'] = 'from_upload'
+            else:
+                await safe_edit_text(query.message,
+                    "❌ Ошибка: имя файла не указано",
+                    reply_markup=get_main_menu_keyboard()
+                )
+        except Exception as e:
+            logger.error(f"❌ Ошибка при выборе видео: {e}", exc_info=True)
+            await safe_edit_text(query.message,
+                f"❌ Ошибка:\n{str(e)}",
+                reply_markup=get_main_menu_keyboard()
+            )
 
 
 async def _process_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE, video_obj, file_name=None, source_type="video"):
@@ -584,14 +791,23 @@ async def _process_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE
             pass
 
 
-async def _convert_uploaded_video_background(video_url: str, filename: str, user_id: int, chat_id: int, status_message):
+async def _convert_uploaded_video_background(video_url: str, filename: str, user_id: int, chat_id: int, status_message, custom_output_name: str = None):
     """
     Фоновая задача для конвертации видео, загруженного на сайт
     Не блокирует работу бота
+    
+    Args:
+        video_url: URL видео для скачивания
+        filename: Имя исходного файла
+        user_id: ID пользователя
+        chat_id: ID чата
+        status_message: Сообщение для обновления статуса
+        custom_output_name: Пользовательское имя для выходного файла (без расширения)
     """
     conversion_key = (user_id, f"uploaded_{filename}")
     try:
-        logger.info(f"🎬 Начало фоновой конвертации загруженного видео: {video_url}")
+        logger.info(f"🎬 Начало фоновой конвертации загруженного видео")
+        logger.info(f"🔍 Параметры: video_url={video_url}, filename={filename}, user_id={user_id}, chat_id={chat_id}, custom_output_name={custom_output_name}")
         
         # Скачиваем видео по URL
         import httpx
@@ -607,10 +823,32 @@ async def _convert_uploaded_video_background(video_url: str, filename: str, user
         
         logger.info(f"✅ Видео скачано: {file_path}")
         
+        # Формируем имя выходного файла
+        if custom_output_name:
+            # Используем пользовательское имя
+            import re
+            safe_name = re.sub(r'[^\w\s\-_\.]', '', custom_output_name)
+            safe_name = re.sub(r'\s+', '_', safe_name)
+            output_base_name = f"{safe_name}.mp4"
+        else:
+            # Автоматическое имя на основе исходного файла
+            base_name = Path(filename).stem
+            output_base_name = f"{base_name}_converted.mp4"
+        
         # Конвертируем видео с ограничением размера до 800MB
-        output_path = await convert_video_to_mp4(file_path, f"uploaded_{filename}", max_size_mb=800)
+        # Используем output_base_name без расширения как file_id для convert_video_to_mp4
+        temp_file_id = output_base_name.replace('.mp4', '')
+        output_path = await convert_video_to_mp4(file_path, temp_file_id, max_size_mb=800)
         
         if output_path and os.path.exists(output_path):
+            # Переименовываем файл в нужное имя, если оно отличается
+            final_output_path = Path("converted") / output_base_name
+            if output_path != str(final_output_path):
+                import shutil
+                shutil.move(output_path, final_output_path)
+                output_path = str(final_output_path)
+                logger.info(f"✅ Файл переименован в: {output_path}")
+            
             output_size = os.path.getsize(output_path)
             logger.info(f"✅ Конвертация завершена: {output_size / 1024 / 1024:.2f}MB -> {output_path}")
             
@@ -621,7 +859,8 @@ async def _convert_uploaded_video_background(video_url: str, filename: str, user
                     webapp_converted_path = Path(WEBAPP_CONVERTED_DIR)
                     webapp_converted_path.mkdir(parents=True, exist_ok=True)
                     
-                    output_filename = os.path.basename(output_path)
+                    # Используем то же имя для веб-версии
+                    output_filename = output_base_name
                     webapp_output_path = webapp_converted_path / output_filename
                     shutil.copy2(output_path, webapp_output_path)
                     

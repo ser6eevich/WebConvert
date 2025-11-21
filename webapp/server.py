@@ -388,6 +388,14 @@ async def upload_form():
                     <input type="file" id="fileInput" name="file" accept="video/*" required>
                 </div>
                 <div class="file-info" id="fileInfo"></div>
+                <div style="margin-top: 20px;">
+                    <label for="fileNameInput" style="display: block; margin-bottom: 8px; color: #a78bfa; font-weight: 500;">
+                        📝 Название файла (необязательно):
+                    </label>
+                    <input type="text" id="fileNameInput" name="filename" placeholder="Оставьте пустым для автоматического названия" 
+                           style="width: 100%; padding: 12px; border-radius: 12px; border: 1px solid rgba(139, 92, 246, 0.3); 
+                                  background: #1a1a1a; color: #e0e0e0; font-size: 14px; box-sizing: border-box;">
+                </div>
                 <div class="progress" id="progress">
                     <div class="progress-bar" id="progressBar"></div>
                 </div>
@@ -483,6 +491,13 @@ async def upload_form():
                 const formData = new FormData();
                 formData.append('file', file);
                 
+                // Получаем имя файла из поля ввода (если указано)
+                const fileNameInput = document.getElementById('fileNameInput');
+                const customFileName = fileNameInput.value.trim();
+                if (customFileName) {
+                    formData.append('custom_filename', customFileName);
+                }
+                
                 // Получаем user_id из Telegram WebApp
                 const tg = window.Telegram.WebApp;
                 if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
@@ -556,12 +571,14 @@ async def upload_form():
 
 
 @app.post("/upload")
-async def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(None)):
+async def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(None), custom_filename: Optional[str] = Form(None)):
     """
     POST /upload - принимает видео файл и сохраняет его на сервере
     
     Args:
         file: Загружаемый видео файл
+        user_id: ID пользователя из Telegram WebApp
+        custom_filename: Пользовательское имя файла (необязательно)
         
     Returns:
         JSON с прямой ссылкой на загруженное видео
@@ -578,8 +595,23 @@ async def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Fo
                 detail=f"Неподдерживаемый формат файла. Разрешенные форматы: {', '.join(ALLOWED_EXTENSIONS)}"
             )
         
-        # Генерируем уникальное имя файла
-        unique_filename = generate_unique_filename(file.filename)
+        # Генерируем имя файла
+        if custom_filename and custom_filename.strip():
+            # Используем пользовательское имя, но добавляем расширение если его нет
+            custom_name = custom_filename.strip()
+            ext = get_file_extension(file.filename)
+            if not custom_name.endswith(ext):
+                custom_name = f"{custom_name}{ext}"
+            # Делаем имя безопасным для файловой системы
+            import re
+            custom_name = re.sub(r'[^\w\s\-_\.]', '', custom_name)
+            custom_name = re.sub(r'\s+', '_', custom_name)
+            # Добавляем уникальный ID чтобы избежать конфликтов
+            unique_id = str(uuid.uuid4())[:8]
+            unique_filename = f"{custom_name.rsplit('.', 1)[0]}_{unique_id}.{custom_name.rsplit('.', 1)[1] if '.' in custom_name else ext.lstrip('.')}"
+        else:
+            # Генерируем уникальное имя файла автоматически
+            unique_filename = generate_unique_filename(file.filename)
         file_path = VIDEOS_DIR / unique_filename
         
         # Читаем файл по частям и сохраняем
