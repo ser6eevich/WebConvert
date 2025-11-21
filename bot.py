@@ -339,6 +339,70 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(welcome_message, reply_markup=reply_markup, parse_mode='Markdown')
+    
+    elif query.data.startswith("convert_uploaded:"):
+        # Обработка кнопки "Да, конвертировать" для загруженного на сайт видео
+        try:
+            # Формат: convert_uploaded:filename:video_url
+            parts = query.data.split(":", 2)
+            if len(parts) >= 3:
+                filename = parts[1]
+                video_url = parts[2]
+                
+                await safe_edit_text(query.message,
+                    f"🔄 Начинаю конвертацию загруженного видео...\n\n"
+                    f"📁 Файл: `{filename}`\n"
+                    f"🔗 Ссылка: {video_url}",
+                    parse_mode='Markdown'
+                )
+                
+                # Запускаем конвертацию в фоне
+                user_id = query.from_user.id
+                chat_id = query.message.chat_id
+                file_id_for_conversion = f"uploaded_{filename}"
+                conversion_key = (user_id, file_id_for_conversion)
+                
+                # Сохраняем информацию о конвертации
+                active_conversions[conversion_key] = {
+                    'status_message': query.message,
+                    'file_path': video_url,  # Используем URL как путь
+                    'chat_id': chat_id,
+                    'user_id': user_id,
+                    'source': 'uploaded_webapp'
+                }
+                
+                # Запускаем конвертацию в фоновой задаче
+                asyncio.create_task(
+                    _convert_uploaded_video_background(
+                        video_url=video_url,
+                        filename=filename,
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        status_message=query.message
+                    )
+                )
+                
+                logger.info(f"✅ Конвертация запущена в фоне для загруженного файла: {filename}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка при запуске конвертации загруженного видео: {e}", exc_info=True)
+            await safe_edit_text(query.message,
+                f"❌ Ошибка при запуске конвертации:\n{str(e)}",
+                reply_markup=get_main_menu_keyboard()
+            )
+    
+    elif query.data.startswith("skip_convert:"):
+        # Обработка кнопки "Нет" - просто подтверждаем
+        try:
+            parts = query.data.split(":", 1)
+            filename = parts[1] if len(parts) > 1 else "файл"
+            await safe_edit_text(query.message,
+                f"✅ Понял, конвертация отменена.\n\n"
+                f"📁 Файл `{filename}` останется без изменений.",
+                parse_mode='Markdown',
+                reply_markup=get_main_menu_keyboard()
+            )
+        except Exception as e:
+            logger.error(f"❌ Ошибка при обработке отмены конвертации: {e}")
 
 
 async def _process_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE, video_obj, file_name=None, source_type="video"):
@@ -513,6 +577,122 @@ async def _process_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
         except:
             pass
+
+
+async def _convert_uploaded_video_background(video_url: str, filename: str, user_id: int, chat_id: int, status_message):
+    """
+    Фоновая задача для конвертации видео, загруженного на сайт
+    Не блокирует работу бота
+    """
+    conversion_key = (user_id, f"uploaded_{filename}")
+    try:
+        logger.info(f"🎬 Начало фоновой конвертации загруженного видео: {video_url}")
+        
+        # Скачиваем видео по URL
+        import httpx
+        file_path = f"downloads/uploaded_{filename}"
+        os.makedirs("downloads", exist_ok=True)
+        
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            async with client.stream('GET', video_url) as response:
+                response.raise_for_status()
+                with open(file_path, 'wb') as f:
+                    async for chunk in response.aiter_bytes():
+                        f.write(chunk)
+        
+        logger.info(f"✅ Видео скачано: {file_path}")
+        
+        # Конвертируем видео с ограничением размера до 800MB
+        output_path = await convert_video_to_mp4(file_path, f"uploaded_{filename}", max_size_mb=800)
+        
+        if output_path and os.path.exists(output_path):
+            output_size = os.path.getsize(output_path)
+            logger.info(f"✅ Конвертация завершена: {output_size / 1024 / 1024:.2f}MB -> {output_path}")
+            
+            # Копируем сконвертированное видео в веб-доступную папку
+            if WEBAPP_CONVERTED_DIR:
+                try:
+                    import shutil
+                    webapp_converted_path = Path(WEBAPP_CONVERTED_DIR)
+                    webapp_converted_path.mkdir(parents=True, exist_ok=True)
+                    
+                    output_filename = os.path.basename(output_path)
+                    webapp_output_path = webapp_converted_path / output_filename
+                    shutil.copy2(output_path, webapp_output_path)
+                    
+                    logger.info(f"✅ Видео скопировано в веб-папку: {webapp_output_path}")
+                    
+                    # Формируем публичный URL для сконвертированного видео
+                    public_base_url = os.getenv('PUBLIC_BASE_URL', 'https://example.com')
+                    converted_url = f"{public_base_url}/converted/{output_filename}"
+                    
+                    # Отправляем сообщение со ссылкой на сконвертированный файл
+                    await safe_edit_text(status_message,
+                        f"✅ **Видео успешно сконвертировано!**\n\n"
+                        f"📁 Файл: `{output_filename}`\n"
+                        f"📊 Размер: {output_size / 1024 / 1024:.2f} MB\n"
+                        f"🔗 **Ссылка на сконвертированный файл:**\n{converted_url}",
+                        parse_mode='Markdown',
+                        reply_markup=get_main_menu_keyboard()
+                    )
+                except Exception as copy_error:
+                    logger.warning(f"⚠️ Не удалось скопировать видео в веб-папку: {copy_error}")
+                    await safe_edit_text(status_message,
+                        f"✅ Видео сконвертировано, но не удалось скопировать в веб-папку.\n\n"
+                        f"Ошибка: {str(copy_error)}",
+                        reply_markup=get_main_menu_keyboard()
+                    )
+            
+            # Удаляем временные файлы
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                logger.info("🗑️ Временные файлы удалены")
+            except Exception as cleanup_error:
+                logger.warning(f"⚠️ Ошибка при удалении временных файлов: {cleanup_error}")
+            
+            # Удаляем из активных конвертаций
+            if conversion_key in active_conversions:
+                del active_conversions[conversion_key]
+        else:
+            logger.error("❌ Не удалось сконвертировать загруженное видео")
+            await safe_edit_text(status_message,
+                "❌ Не удалось сконвертировать видео 😔\n\n"
+                "💡 **Возможные причины:**\n"
+                "• Неподдерживаемый формат видео\n"
+                "• Поврежденный файл\n"
+                "• Недостаточно места на диске\n"
+                "• Ошибка FFmpeg\n\n"
+                "Попробуйте другой файл или другой формат.",
+                reply_markup=get_main_menu_keyboard()
+            )
+            
+            # Удаляем входной файл при ошибке
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+            except:
+                pass
+            
+            # Удаляем из активных конвертаций
+            if conversion_key in active_conversions:
+                del active_conversions[conversion_key]
+    except Exception as e:
+        logger.error(f"❌ Ошибка в фоновой конвертации загруженного видео: {e}", exc_info=True)
+        try:
+            await safe_edit_text(status_message,
+                f"❌ Произошла ошибка при конвертации видео:\n{str(e)}\n\n"
+                "Попробуйте отправить видео еще раз.",
+                reply_markup=get_main_menu_keyboard()
+            )
+        except:
+            pass
+        
+        # Удаляем из активных конвертаций
+        if conversion_key in active_conversions:
+            del active_conversions[conversion_key]
 
 
 async def _convert_video_background(file_path: str, file_id: str, user_id: int, chat_id: int, status_message):

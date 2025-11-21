@@ -8,6 +8,7 @@ import time
 import re
 import threading
 from pathlib import Path
+from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -169,13 +170,14 @@ def _detect_hardware_acceleration(ffmpeg_path: str) -> dict:
     return result
 
 
-async def convert_video_to_mp4(input_path: str, file_id: str) -> str:
+async def convert_video_to_mp4(input_path: str, file_id: str, max_size_mb: Optional[int] = None) -> str:
     """
     Конвертирует видео в MP4 с разрешением 1920x1080
     
     Args:
         input_path: Путь к исходному видео файлу
         file_id: ID файла для создания уникального имени выходного файла
+        max_size_mb: Максимальный размер выходного файла в MB (опционально, для ограничения размера)
     
     Returns:
         Путь к сконвертированному файлу или None в случае ошибки
@@ -194,7 +196,13 @@ async def convert_video_to_mp4(input_path: str, file_id: str) -> str:
             None,
             _convert_video_sync,
             input_path,
-            output_path
+            output_path,
+            1920,  # target_width
+            1080,  # target_height
+            None,  # ffmpeg_path
+            None,  # ffprobe_path
+            False,  # force_cpu
+            max_size_mb  # max_size_mb
         )
         
         if os.path.exists(output_path):
@@ -210,7 +218,7 @@ async def convert_video_to_mp4(input_path: str, file_id: str) -> str:
 
 
 def _convert_video_sync(input_path: str, output_path: str, target_width: int = 1920, target_height: int = 1080,
-                        ffmpeg_path: str = None, ffprobe_path: str = None, force_cpu: bool = False):
+                        ffmpeg_path: str = None, ffprobe_path: str = None, force_cpu: bool = False, max_size_mb: int = None):
     """
     Синхронная функция конвертации видео через FFmpeg
     
@@ -308,7 +316,7 @@ def _convert_video_sync(input_path: str, output_path: str, target_width: int = 1
         if 'webm' in format_name or codec_name in ['vp8', 'vp9']:
             logger.info(f"Обнаружен WEBM файл с кодеком {codec_name}. FFmpeg автоматически декодирует VP8/VP9.")
         
-        # Получаем длительность видео для расчета прогресса
+        # Получаем длительность видео для расчета прогресса и битрейта
         duration = float(probe.get('format', {}).get('duration', 0))
         if not duration:
             # Пытаемся получить из видеопотока
@@ -316,6 +324,24 @@ def _convert_video_sync(input_path: str, output_path: str, target_width: int = 1
         if not duration:
             logger.warning("Не удалось определить длительность видео, прогресс будет приблизительным")
             duration = 0
+        
+        # Вычисляем оптимальный битрейт для ограничения размера файла
+        target_bitrate = None
+        if max_size_mb and duration > 0:
+            # Вычисляем максимальный битрейт в kbps для достижения целевого размера
+            # Формула: размер (MB) * 8 * 1024 / длительность (сек) = битрейт (kbps)
+            # Учитываем аудио битрейт (192k) и оставляем запас ~10%
+            audio_bitrate_kbps = 192
+            max_size_bytes = max_size_mb * 1024 * 1024
+            max_total_bitrate_kbps = (max_size_bytes * 8) / (duration * 1000) * 0.9  # 90% для запаса
+            target_bitrate = int(max_total_bitrate_kbps - audio_bitrate_kbps)
+            
+            if target_bitrate < 500:  # Минимальный разумный битрейт
+                target_bitrate = 500
+            elif target_bitrate > 10000:  # Максимальный битрейт
+                target_bitrate = 10000
+            
+            logger.info(f"🎯 Ограничение размера: {max_size_mb}MB, длительность: {duration:.1f}с, целевой битрейт: {target_bitrate}kbps")
         
         # Получаем исходные размеры
         width = int(video_info.get('width', 1920))
@@ -456,8 +482,15 @@ def _convert_video_sync(input_path: str, output_path: str, target_width: int = 1
         output_kwargs['c:v'] = video_codec
         
         # Добавляем битрейт (если не указан в hw_output_options)
-        if 'b:v' not in hw_output_options and video_codec == 'libx264':
-            output_kwargs['b:v'] = '5000k'
+        if 'b:v' not in hw_output_options:
+            if target_bitrate:
+                # Используем вычисленный битрейт для ограничения размера
+                output_kwargs['b:v'] = f'{target_bitrate}k'
+                output_kwargs['maxrate'] = f'{target_bitrate}k'
+                output_kwargs['bufsize'] = f'{target_bitrate * 2}k'
+                logger.info(f"📊 Используется целевой битрейт: {target_bitrate}kbps для ограничения размера")
+            elif video_codec == 'libx264':
+                output_kwargs['b:v'] = '5000k'
         
         # Добавляем настройки для программного кодирования
         if video_codec == 'libx264':

@@ -29,6 +29,8 @@ PUBLIC_BASE_URL = os.getenv('PUBLIC_BASE_URL', 'https://example.com')
 VIDEOS_DIR = Path(os.getenv('VIDEOS_DIR', 'videos'))
 CONVERTED_DIR = Path(os.getenv('CONVERTED_DIR', 'converted'))  # Папка для сконвертированных видео
 PORT = int(os.getenv('WEBAPP_PORT', '8000'))
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')  # Токен бота для отправки уведомлений
+TELEGRAM_NOTIFY_CHAT_ID = os.getenv('TELEGRAM_NOTIFY_CHAT_ID', '')  # ID чата для уведомлений (опционально)
 
 # Создаем директории, если их нет
 VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
@@ -330,8 +332,13 @@ async def upload_form():
                 color: var(--tg-theme-button-text-color, #ffffff);
             }
             .btn-delete {
-                background: #dc3545;
+                background: #ef4444;
                 color: #ffffff;
+            }
+            .btn-delete:hover {
+                background: #dc2626;
+                transform: translateY(-2px);
+                box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);
             }
             .btn-refresh {
                 width: 100%;
@@ -475,6 +482,15 @@ async def upload_form():
 
                 const formData = new FormData();
                 formData.append('file', file);
+                
+                // Получаем user_id из Telegram WebApp
+                const tg = window.Telegram.WebApp;
+                if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+                    const userId = tg.initDataUnsafe.user.id;
+                    if (userId) {
+                        formData.append('user_id', userId.toString());
+                    }
+                }
 
                 try {
                     const xhr = new XMLHttpRequest();
@@ -540,7 +556,7 @@ async def upload_form():
 
 
 @app.post("/upload")
-async def upload_video(file: UploadFile = File(...)):
+async def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(None)):
     """
     POST /upload - принимает видео файл и сохраняет его на сервере
     
@@ -591,6 +607,52 @@ async def upload_video(file: UploadFile = File(...)):
         
         # Формируем публичный URL
         video_url = f"{PUBLIC_BASE_URL}/videos/{unique_filename}"
+        
+        # Отправляем уведомление боту о загрузке файла (если настроен токен)
+        if TELEGRAM_BOT_TOKEN:
+            try:
+                import httpx
+                # Получаем user_id из параметров формы (передается из Telegram WebApp)
+                notify_user_id = user_id or TELEGRAM_NOTIFY_CHAT_ID
+                
+                if notify_user_id:
+                    file_size_mb = file_size / 1024 / 1024
+                    message_text = (
+                        f"📹 **Новое видео загружено на сайт!**\n\n"
+                        f"📁 Файл: `{unique_filename}`\n"
+                        f"📊 Размер: {file_size_mb:.2f} MB\n"
+                        f"🔗 Ссылка: {video_url}\n\n"
+                        f"❓ Конвертировать ли этот ролик?"
+                    )
+                    
+                    # Создаем кнопки Да/Нет
+                    keyboard = {
+                        "inline_keyboard": [
+                            [
+                                {"text": "✅ Да, конвертировать", "callback_data": f"convert_uploaded:{unique_filename}:{video_url}"},
+                                {"text": "❌ Нет", "callback_data": f"skip_convert:{unique_filename}"}
+                            ]
+                        ]
+                    }
+                    
+                    # Отправляем сообщение через Telegram Bot API
+                    bot_api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        response = await client.post(
+                            bot_api_url,
+                            json={
+                                "chat_id": notify_user_id,
+                                "text": message_text,
+                                "parse_mode": "Markdown",
+                                "reply_markup": keyboard
+                            }
+                        )
+                        if response.status_code == 200:
+                            logger.info(f"📤 Уведомление отправлено боту о загрузке: {unique_filename}")
+                        else:
+                            logger.warning(f"⚠️ Не удалось отправить уведомление боту: {response.text}")
+            except Exception as e:
+                logger.warning(f"⚠️ Не удалось отправить уведомление боту: {e}")
         
         return {
             "status": "success",
@@ -1362,6 +1424,9 @@ async def converted_list():
                                     <button type="button" class="video-item-btn btn-copy" onclick="copyVideoUrl('${escapeHtml(video.url)}', '${escapeHtml(video.filename)}')">
                                         📋 Копировать ссылку
                                     </button>
+                                    <button type="button" class="video-item-btn btn-delete" onclick="deleteVideo('${escapeHtml(video.filename)}')">
+                                        🗑️ Удалить
+                                    </button>
                                 </div>
                             </div>
                         `;
@@ -1486,6 +1551,61 @@ async def list_converted():
         logger.info(f"Найдено сконвертированных видео файлов: {len(videos)}")
         
         return JSONResponse(content={"videos": videos})
+    except Exception as e:
+        logger.error(f"❌ Ошибка при получении списка сконвертированных видео: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка при получении списка: {str(e)}")
+
+
+@app.delete("/api/converted/{filename}")
+async def delete_converted(filename: str):
+    """
+    DELETE /api/converted/{filename} - удаляет сконвертированный видео файл
+    
+    Args:
+        filename: Имя файла для удаления
+        
+    Returns:
+        JSON с результатом операции
+    """
+    try:
+        # Получаем абсолютный путь к директории
+        if CONVERTED_DIR.is_absolute():
+            converted_path = CONVERTED_DIR
+        else:
+            converted_path = Path.cwd() / CONVERTED_DIR
+        
+        # Нормализуем путь
+        converted_path = converted_path.resolve()
+        file_path = converted_path / filename
+        file_path = file_path.resolve()
+        
+        # Проверка безопасности: файл должен быть внутри converted_path
+        if not str(file_path).startswith(str(converted_path)):
+            raise HTTPException(status_code=403, detail="Доступ запрещен")
+        
+        # Проверяем, что файл существует
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Файл не найден")
+        
+        # Проверяем, что это видео файл
+        if not is_video_file(filename):
+            raise HTTPException(status_code=400, detail="Неподдерживаемый формат файла")
+        
+        # Удаляем файл
+        file_path.unlink()
+        
+        logger.info(f"✅ Сконвертированный файл удален: {filename}")
+        
+        return JSONResponse(content={
+            "status": "success",
+            "message": f"Файл {filename} успешно удален"
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Ошибка при удалении сконвертированного файла: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка при удалении файла: {str(e)}")
         
     except Exception as e:
         logger.error(f"Ошибка при получении списка сконвертированных видео: {e}", exc_info=True)

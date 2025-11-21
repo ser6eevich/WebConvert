@@ -409,7 +409,7 @@ sudo nano /etc/nginx/sites-available/video-upload
 ```nginx
 server {
     listen 80;
-    server_name ваш-домен.com www.ваш-домен.com;
+    server_name ikurganskiy.ru www.ikurganskiy.ru;
 
     # Логи
     access_log /var/log/nginx/video-upload-access.log;
