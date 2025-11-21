@@ -864,15 +864,36 @@ async def _convert_uploaded_video_background(video_url: str, filename: str, user
                     public_base_url = os.getenv('PUBLIC_BASE_URL', 'https://example.com')
                     converted_url = f"{public_base_url}/converted/{output_filename}"
                     
+                    logger.info(f"🔗 Формирую ссылку на сконвертированное видео: {converted_url}")
+                    logger.info(f"📤 Отправляю сообщение со ссылкой пользователю {user_id}")
+                    
                     # Отправляем сообщение со ссылкой на сконвертированный файл
-                    await safe_edit_text(status_message,
-                        f"✅ **Видео успешно сконвертировано!**\n\n"
-                        f"📁 Файл: `{output_filename}`\n"
-                        f"📊 Размер: {output_size / 1024 / 1024:.2f} MB\n"
-                        f"🔗 **Ссылка на сконвертированный файл:**\n{converted_url}",
-                        parse_mode='Markdown',
-                        reply_markup=get_main_menu_keyboard()
-                    )
+                    try:
+                        await safe_edit_text(status_message,
+                            f"Видео успешно сконвертировано!\n\n"
+                            f"Файл: {output_filename}\n"
+                            f"Размер: {output_size / 1024 / 1024:.2f} MB\n"
+                            f"Ссылка на сконвертированный файл:\n{converted_url}",
+                            reply_markup=get_main_menu_keyboard()
+                        )
+                        logger.info(f"✅ Сообщение со ссылкой успешно отправлено")
+                    except Exception as send_error:
+                        logger.error(f"❌ Ошибка при отправке сообщения со ссылкой: {send_error}", exc_info=True)
+                        # Пытаемся отправить новое сообщение вместо редактирования
+                        try:
+                            app = globals().get('application')
+                            if app:
+                                await app.bot.send_message(
+                                    chat_id=chat_id,
+                                    text=f"Видео успешно сконвертировано!\n\n"
+                                         f"Файл: {output_filename}\n"
+                                         f"Размер: {output_size / 1024 / 1024:.2f} MB\n"
+                                         f"Ссылка на сконвертированный файл:\n{converted_url}",
+                                    reply_markup=get_main_menu_keyboard()
+                                )
+                                logger.info(f"✅ Сообщение со ссылкой отправлено как новое сообщение")
+                        except Exception as send_new_error:
+                            logger.error(f"❌ Ошибка при отправке нового сообщения: {send_new_error}", exc_info=True)
                 except Exception as copy_error:
                     logger.warning(f"⚠️ Не удалось скопировать видео в веб-папку: {copy_error}")
                     await safe_edit_text(status_message,
