@@ -5,7 +5,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-from telegram.error import MessageNotModified
 from video_converter import convert_video_to_mp4
 from text_generator import generate_post_from_transcription
 import httpx
@@ -32,12 +31,25 @@ async def safe_edit_text(message, text, **kwargs):
     """Безопасно редактирует текст сообщения, игнорируя MessageNotModified"""
     try:
         await message.edit_text(text, **kwargs)
-    except MessageNotModified:
-        # Сообщение уже имеет такой же текст - это нормально, просто игнорируем
-        pass
     except Exception as e:
-        logger.error(f"Ошибка при редактировании сообщения: {e}")
-        raise
+        # Проверяем, является ли это ошибкой "MessageNotModified"
+        error_msg = str(e).lower()
+        if 'message is not modified' in error_msg or 'not modified' in error_msg:
+            # Сообщение уже имеет такой же текст - это нормально, просто игнорируем
+            pass
+        else:
+            logger.error(f"Ошибка при редактировании сообщения: {e}")
+            raise
+
+# Вспомогательная функция для создания клавиатуры с кнопкой "Главное меню"
+def get_main_menu_keyboard():
+    """Создает клавиатуру с кнопкой 'Главное меню'"""
+    keyboard = [
+        [
+            InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 # Получаем токены из переменных окружения
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -351,7 +363,7 @@ async def _process_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         if not video_obj:
             logger.error("❌ Не удалось получить объект видео")
-            await update.message.reply_text("❌ Не удалось получить видео файл")
+            await update.message.reply_text("❌ Не удалось получить видео файл", reply_markup=get_main_menu_keyboard())
             return
         
         # Получаем информацию о файле
@@ -568,7 +580,7 @@ async def _convert_video_background(file_path: str, file_id: str, user_id: int, 
             app = globals().get('application')
             if not app:
                 logger.error("❌ Application не доступна для отправки результата")
-                await status_message.edit_text("❌ Ошибка: не удалось отправить результат")
+                await safe_edit_text(status_message, "❌ Ошибка: не удалось отправить результат", reply_markup=get_main_menu_keyboard())
                 return
             
             try:
@@ -611,6 +623,9 @@ async def _convert_video_background(file_path: str, file_id: str, user_id: int, 
                 [
                     InlineKeyboardButton("📹 Конвертер", callback_data="mode_converter"),
                     InlineKeyboardButton("✍️ Генерация", callback_data="mode_generator")
+                ],
+                [
+                    InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
                 ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -626,14 +641,15 @@ async def _convert_video_background(file_path: str, file_id: str, user_id: int, 
                 del active_conversions[conversion_key]
         else:
             logger.error("❌ Не удалось сконвертировать видео")
-            await status_message.edit_text(
+            await safe_edit_text(status_message,
                 "❌ Не удалось сконвертировать видео 😔\n\n"
                 "💡 **Возможные причины:**\n"
                 "• Неподдерживаемый формат видео\n"
                 "• Поврежденный файл\n"
                 "• Недостаточно места на диске\n"
                 "• Ошибка FFmpeg\n\n"
-                "Попробуйте другой файл или другой формат."
+                "Попробуйте другой файл или другой формат.",
+                reply_markup=get_main_menu_keyboard()
             )
             
             # Удаляем входной файл при ошибке
@@ -649,9 +665,10 @@ async def _convert_video_background(file_path: str, file_id: str, user_id: int, 
     except Exception as e:
         logger.error(f"❌ Ошибка в фоновой конвертации: {e}", exc_info=True)
         try:
-            await status_message.edit_text(
+            await safe_edit_text(status_message,
                 f"❌ Произошла ошибка при конвертации видео:\n{str(e)}\n\n"
-                "Попробуйте отправить видео еще раз."
+                "Попробуйте отправить видео еще раз.",
+                reply_markup=get_main_menu_keyboard()
             )
         except:
             pass
@@ -665,6 +682,9 @@ async def _convert_video_background(file_path: str, file_id: str, user_id: int, 
                 [
                     InlineKeyboardButton("📹 Конвертер", callback_data="mode_converter"),
                     InlineKeyboardButton("✍️ Генерация", callback_data="mode_generator")
+                ],
+                [
+                    InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
                 ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -683,7 +703,8 @@ async def _convert_video_background(file_path: str, file_id: str, user_id: int, 
             try:
                 await app.bot.send_message(
                     chat_id=chat_id,
-                    text=f"❌ Произошла ошибка при обработке видео: {str(e)}"
+                    text=f"❌ Произошла ошибка при обработке видео: {str(e)}",
+                    reply_markup=get_main_menu_keyboard()
                 )
             except:
                 pass
@@ -695,7 +716,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video = update.message.video
     if not video:
         logger.error("❌ Не удалось получить video объект из update.message.video")
-        await update.message.reply_text("❌ Не удалось получить видео файл")
+        await update.message.reply_text("❌ Не удалось получить видео файл", reply_markup=get_main_menu_keyboard())
         return
     
     await _process_video_file(update, context, video, source_type="video")
@@ -712,7 +733,7 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if not update.effective_message or not update.effective_message.web_app_data:
             logger.error("❌ WebApp данные не найдены в сообщении")
             if update.effective_message:
-                await update.effective_message.reply_text("❌ Ошибка: данные из WebApp не получены")
+                await update.effective_message.reply_text("❌ Ошибка: данные из WebApp не получены", reply_markup=get_main_menu_keyboard())
             return
         
         # Получаем данные из WebApp
@@ -726,7 +747,7 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
             logger.info(f"✅ JSON распарсен: type={data.get('type')}, url={data.get('video_url', 'N/A')[:50]}...")
         except json.JSONDecodeError as e:
             logger.error(f"❌ Ошибка парсинга JSON из WebApp: {e}")
-            await update.message.reply_text("❌ Ошибка: неверный формат данных из WebApp")
+            await update.message.reply_text("❌ Ошибка: неверный формат данных из WebApp", reply_markup=get_main_menu_keyboard())
             return
         
         # Проверяем тип данных
@@ -783,13 +804,14 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.effective_message.reply_text(
                 f"⚠️ Получены данные из WebApp, но формат не распознан.\n\n"
                 f"Тип: {data.get('type', 'не указан')}\n"
-                f"URL: {data.get('video_url', 'не указан')}"
+                f"URL: {data.get('video_url', 'не указан')}",
+                reply_markup=get_main_menu_keyboard()
             )
             
     except Exception as e:
         logger.error(f"❌ Ошибка при обработке данных WebApp: {e}", exc_info=True)
         if update.effective_message:
-            await update.effective_message.reply_text(f"❌ Произошла ошибка при обработке данных из WebApp: {str(e)}")
+            await update.effective_message.reply_text(f"❌ Произошла ошибка при обработке данных из WebApp: {str(e)}", reply_markup=get_main_menu_keyboard())
 
 
 async def handle_video_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1078,12 +1100,13 @@ async def handle_video_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as send_error:
                 error_msg = str(send_error).lower()
                 if 'too big' in error_msg or 'file is too big' in error_msg:
-                    await status_message.edit_text(
+                    await safe_edit_text(status_message,
                         f"✅ Видео успешно сконвертировано!\n\n"
                         f"❌ Но результат слишком большой для отправки через бота.\n\n"
                         f"📊 Размер результата: {output_size / 1024 / 1024:.1f}MB\n"
                         f"⚠️ Максимальный размер для отправки: {MAX_UPLOAD_SIZE / 1024 / 1024:.0f}MB\n\n"
-                        f"💡 Используйте локальный Bot API сервер для работы с большими файлами."
+                        f"💡 Используйте локальный Bot API сервер для работы с большими файлами.",
+                        reply_markup=get_main_menu_keyboard()
                     )
                 else:
                     raise  # Пробрасываем другие ошибки
@@ -1102,6 +1125,9 @@ async def handle_video_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [
                     InlineKeyboardButton("📹 Конвертер", callback_data="mode_converter"),
                     InlineKeyboardButton("✍️ Генерация", callback_data="mode_generator")
+                ],
+                [
+                    InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
                 ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1139,7 +1165,7 @@ async def handle_video_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     except Exception as e:
         logger.error(f"Ошибка при конвертации по URL: {e}")
-        await update.message.reply_text(f"❌ Произошла ошибка: {str(e)}")
+        await update.message.reply_text(f"❌ Произошла ошибка: {str(e)}", reply_markup=get_main_menu_keyboard())
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1188,7 +1214,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = update.message.text
         
         if not text or len(text.strip()) < 10:
-            await update.message.reply_text("❌ Текст слишком короткий. Отправьте более подробный текст.")
+            await update.message.reply_text("❌ Текст слишком короткий. Отправьте более подробный текст.", reply_markup=get_main_menu_keyboard())
             return
         
         # Определяем какой ассистент использовать
@@ -1196,13 +1222,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if post_type == 'videos':
             assistant_id = GPT_ASSISTANT_ID_VIDEOS
             if not assistant_id:
-                await update.message.reply_text("❌ GPT_ASSISTANT_ID_VIDEOS не установлен в .env файле")
+                await update.message.reply_text("❌ GPT_ASSISTANT_ID_VIDEOS не установлен в .env файле", reply_markup=get_main_menu_keyboard())
                 return
             status_message = await update.message.reply_text("⏳ Обрабатываю транскрибацию для роликов на платформе...")
         else:
             assistant_id = GPT_ASSISTANT_ID
             if not assistant_id:
-                await update.message.reply_text("❌ GPT_ASSISTANT_ID не установлен в .env файле")
+                await update.message.reply_text("❌ GPT_ASSISTANT_ID не установлен в .env файле", reply_markup=get_main_menu_keyboard())
                 return
             status_message = await update.message.reply_text("⏳ Обрабатываю транскрибацию для вебинара...")
         
@@ -1210,7 +1236,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         content_parts = await generate_post_from_transcription(text, assistant_id)
         
         if not content_parts:
-            await status_message.edit_text("❌ Не удалось сгенерировать контент. Проверьте настройки GPT_ASSISTANT_ID в .env")
+            await safe_edit_text(status_message, "❌ Не удалось сгенерировать контент. Проверьте настройки GPT_ASSISTANT_ID в .env", reply_markup=get_main_menu_keyboard())
             return
         
         await status_message.edit_text("✅ Контент готов! Отправляю...")
@@ -1305,7 +1331,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     except Exception as e:
         logger.error(f"Ошибка при обработке текста: {e}")
-        await update.message.reply_text(f"❌ Произошла ошибка: {str(e)}")
+        await update.message.reply_text(f"❌ Произошла ошибка: {str(e)}", reply_markup=get_main_menu_keyboard())
         
         # Отправляем кнопку меню даже при ошибке
         keyboard = [
@@ -1403,7 +1429,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text = f.read()
             
             if not text or len(text.strip()) < 10:
-                await status_message.edit_text("❌ Файл слишком короткий или пустой")
+                await safe_edit_text(status_message, "❌ Файл слишком короткий или пустой", reply_markup=get_main_menu_keyboard())
                 os.remove(file_path)
                 return
             
@@ -1412,13 +1438,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if post_type == 'videos':
                 assistant_id = GPT_ASSISTANT_ID_VIDEOS
                 if not assistant_id:
-                    await status_message.edit_text("❌ GPT_ASSISTANT_ID_VIDEOS не установлен в .env файле")
+                    await safe_edit_text(status_message, "❌ GPT_ASSISTANT_ID_VIDEOS не установлен в .env файле", reply_markup=get_main_menu_keyboard())
                     os.remove(file_path)
                     return
             else:
                 assistant_id = GPT_ASSISTANT_ID
                 if not assistant_id:
-                    await status_message.edit_text("❌ GPT_ASSISTANT_ID не установлен в .env файле")
+                    await safe_edit_text(status_message, "❌ GPT_ASSISTANT_ID не установлен в .env файле", reply_markup=get_main_menu_keyboard())
                     os.remove(file_path)
                     return
             
@@ -1426,7 +1452,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             content_parts = await generate_post_from_transcription(text, assistant_id)
             
             if not content_parts:
-                await status_message.edit_text("❌ Не удалось сгенерировать контент. Проверьте настройки ассистента в .env")
+                await safe_edit_text(status_message, "❌ Не удалось сгенерировать контент. Проверьте настройки ассистента в .env", reply_markup=get_main_menu_keyboard())
                 os.remove(file_path)
                 
                 # Отправляем кнопку меню при ошибке
@@ -1568,7 +1594,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
     except Exception as e:
         logger.error(f"Ошибка при обработке документа: {e}")
-        await update.message.reply_text(f"❌ Произошла ошибка: {str(e)}")
+        await update.message.reply_text(f"❌ Произошла ошибка: {str(e)}", reply_markup=get_main_menu_keyboard())
 
 
 def check_ffmpeg():
