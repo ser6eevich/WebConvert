@@ -126,11 +126,32 @@ def _detect_hardware_acceleration(ffmpeg_path: str) -> dict:
         
         # Intel/AMD VAAPI (для Linux с Intel/AMD GPU)
         if 'h264_vaapi' in encoders_output:
-            result['type'] = 'vaapi'
-            result['encoder'] = 'h264_vaapi'
-            result['available'] = True
-            logger.info("✅ Обнаружено аппаратное ускорение: VAAPI")
-            return result
+            # Проверяем реальную доступность VAAPI - пытаемся запустить тестовую команду
+            try:
+                test_cmd = [
+                    ffmpeg_path, '-hide_banner', '-f', 'lavfi', '-i', 'testsrc=duration=0.1:size=320x240:rate=1',
+                    '-vf', 'format=nv12,hwupload,scale_vaapi=320:240', '-c:v', 'h264_vaapi', '-frames:v', '1',
+                    '-f', 'null', '-'
+                ]
+                test_process = subprocess.run(
+                    test_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                
+                # Если команда выполнилась успешно
+                if test_process.returncode == 0:
+                    result['type'] = 'vaapi'
+                    result['encoder'] = 'h264_vaapi'
+                    result['available'] = True
+                    logger.info("✅ Обнаружено аппаратное ускорение: VAAPI (проверено реальным тестом)")
+                    return result
+                else:
+                    logger.warning(f"⚠️ VAAPI найден в списке энкодеров, но не работает (нет GPU/драйверов). Ошибка: {test_process.stderr[:200]}")
+            except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
+                logger.warning(f"⚠️ Не удалось проверить реальную доступность VAAPI: {e}")
+                # Не помечаем как доступный, если тест не прошел
         
         # Apple VideoToolbox (для macOS)
         if 'h264_videotoolbox' in encoders_output:
@@ -426,8 +447,9 @@ def _convert_video_sync(input_path: str, output_path: str, target_width: int = 1
             'movflags': 'faststart',  # Для быстрого воспроизведения в браузере
         }
         
-        # Для NVENC pix_fmt должен быть установлен отдельно или не указан (NVENC сам выберет)
-        if video_codec != 'h264_nvenc':
+        # Для аппаратного ускорения (NVENC, VAAPI) pix_fmt должен быть установлен отдельно или не указан
+        # Они сами выберут нужный формат
+        if video_codec not in ['h264_nvenc', 'h264_vaapi', 'h264_videotoolbox']:
             output_kwargs['pix_fmt'] = 'yuv420p'  # Совместимость с большинством устройств
         
         # Добавляем видеокодек - используем c:v вместо vcodec для совместимости
@@ -564,24 +586,39 @@ def _convert_video_sync(input_path: str, output_path: str, target_width: int = 1
             logger.error(f"FFmpeg завершился с ошибкой (код {process.returncode})")
             logger.error(f"Полный stderr FFmpeg:\n{stderr_output}")
             
-            # Проверяем, является ли это ошибкой NVENC (нет драйверов/библиотек)
-            nvenc_error_indicators = [
-                'Cannot load libnvidia-encode.so',
-                'Error while opening encoder',
-                'The minimum required Nvidia driver',
-                'libnvidia-encode'
-            ]
+            # Проверяем, является ли это ошибкой аппаратного ускорения (нет драйверов/библиотек/GPU)
+            hw_error_indicators = {
+                'h264_nvenc': [
+                    'Cannot load libnvidia-encode.so',
+                    'Error while opening encoder',
+                    'The minimum required Nvidia driver',
+                    'libnvidia-encode'
+                ],
+                'h264_vaapi': [
+                    'Impossible to convert between the formats',
+                    'Error reinitializing filters',
+                    'Failed to inject frame into filter network',
+                    'Function not implemented',
+                    'scale_vaapi',
+                    'hwupload'
+                ],
+                'h264_videotoolbox': [
+                    'Error while opening encoder',
+                    'videotoolbox'
+                ]
+            }
             
-            is_nvenc_error = any(indicator in stderr_output for indicator in nvenc_error_indicators)
-            
-            # Если это ошибка NVENC и мы пытались использовать NVENC, переключаемся на libx264
-            if is_nvenc_error and video_codec == 'h264_nvenc':
-                logger.warning("⚠️ NVENC недоступен (нет драйверов/GPU), автоматически переключаюсь на libx264 (CPU)")
-                # Рекурсивно вызываем конвертацию с libx264
-                return _convert_video_sync(
-                    input_path, output_path, target_width, target_height,
-                    ffmpeg_path, ffprobe_path, force_cpu=True
-                )
+            # Проверяем, какое аппаратное ускорение использовалось и есть ли соответствующая ошибка
+            is_hw_error = False
+            for codec, indicators in hw_error_indicators.items():
+                if video_codec == codec and any(indicator in stderr_output for indicator in indicators):
+                    is_hw_error = True
+                    logger.warning(f"⚠️ {codec.upper()} недоступен (нет драйверов/GPU/поддержки), автоматически переключаюсь на libx264 (CPU)")
+                    # Рекурсивно вызываем конвертацию с libx264
+                    return _convert_video_sync(
+                        input_path, output_path, target_width, target_height,
+                        ffmpeg_path, ffprobe_path, force_cpu=True
+                    )
             
             # Для исключения берем хвост (последние 4000 символов), где обычно находится реальная ошибка
             MAX_LEN = 4000
