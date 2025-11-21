@@ -604,6 +604,9 @@ async def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Fo
                 f.write(chunk)
         
         logger.info(f"✅ Видео загружено: {unique_filename} ({file_size / 1024 / 1024:.2f} MB)")
+        logger.info(f"🔍 Получен user_id из формы: {user_id}")
+        logger.info(f"🔍 TELEGRAM_BOT_TOKEN настроен: {bool(TELEGRAM_BOT_TOKEN)}")
+        logger.info(f"🔍 TELEGRAM_NOTIFY_CHAT_ID: {TELEGRAM_NOTIFY_CHAT_ID}")
         
         # Формируем публичный URL
         video_url = f"{PUBLIC_BASE_URL}/videos/{unique_filename}"
@@ -614,6 +617,7 @@ async def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Fo
                 import httpx
                 # Получаем user_id из параметров формы (передается из Telegram WebApp)
                 notify_user_id = user_id or TELEGRAM_NOTIFY_CHAT_ID
+                logger.info(f"🔍 notify_user_id для отправки: {notify_user_id}")
                 
                 if notify_user_id:
                     file_size_mb = file_size / 1024 / 1024
@@ -637,6 +641,7 @@ async def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Fo
                     
                     # Отправляем сообщение через Telegram Bot API
                     bot_api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+                    logger.info(f"🔍 Отправка уведомления: user_id={notify_user_id}, filename={unique_filename}")
                     async with httpx.AsyncClient(timeout=10.0) as client:
                         response = await client.post(
                             bot_api_url,
@@ -650,7 +655,9 @@ async def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Fo
                         if response.status_code == 200:
                             logger.info(f"📤 Уведомление отправлено боту о загрузке: {unique_filename}")
                         else:
-                            logger.warning(f"⚠️ Не удалось отправить уведомление боту: {response.text}")
+                            logger.warning(f"⚠️ Не удалось отправить уведомление боту: {response.status_code} - {response.text}")
+                else:
+                    logger.warning(f"⚠️ user_id не получен из формы и TELEGRAM_NOTIFY_CHAT_ID не настроен. user_id из формы: {user_id}")
             except Exception as e:
                 logger.warning(f"⚠️ Не удалось отправить уведомление боту: {e}")
         
