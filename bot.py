@@ -539,7 +539,8 @@ async def _process_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE
         await safe_edit_text(status_message,
             "🔄 Конвертирую видео в MP4 1920x1080...\n\n"
             "⏳ Это может занять некоторое время.\n"
-            "💡 Вы можете продолжать пользоваться ботом - я уведомлю вас, когда конвертация завершится!"
+            "💡 Вы можете продолжать пользоваться ботом - я уведомлю вас, когда конвертация завершится!",
+            reply_markup=get_main_menu_keyboard()
         )
         logger.info("🔄 Начинаю конвертацию через FFmpeg в фоновом режиме")
         
@@ -712,34 +713,63 @@ async def _convert_video_background(file_path: str, file_id: str, user_id: int, 
             output_size = os.path.getsize(output_path)
             logger.info(f"✅ Конвертация завершена: {output_size / 1024 / 1024:.2f}MB -> {output_path}")
             
-            # Копируем сконвертированное видео в веб-доступную папку
+            # Копируем сконвертированное видео в веб-доступную папку и формируем ссылку
+            converted_url = None
+            logger.info(f"🔍 WEBAPP_CONVERTED_DIR: {WEBAPP_CONVERTED_DIR}")
             if WEBAPP_CONVERTED_DIR:
                 try:
                     import shutil
                     webapp_converted_path = Path(WEBAPP_CONVERTED_DIR)
                     webapp_converted_path.mkdir(parents=True, exist_ok=True)
                     
-                    # Копируем файл с уникальным именем
                     output_filename = os.path.basename(output_path)
                     webapp_output_path = webapp_converted_path / output_filename
-                    shutil.copy2(output_path, webapp_output_path)
                     
-                    logger.info(f"✅ Видео скопировано в веб-папку: {webapp_output_path}")
+                    logger.info(f"🔍 Копирую файл: {output_path} -> {webapp_output_path}")
+                    
+                    # Копируем только если еще не скопировано
+                    if not webapp_output_path.exists():
+                        shutil.copy2(output_path, webapp_output_path)
+                        logger.info(f"✅ Видео скопировано в веб-папку: {webapp_output_path}")
+                    else:
+                        logger.info(f"✅ Видео уже есть в веб-папке: {webapp_output_path}")
+                    
+                    # Формируем публичный URL для сконвертированного видео
+                    public_base_url = os.getenv('PUBLIC_BASE_URL', 'https://example.com')
+                    logger.info(f"🔍 PUBLIC_BASE_URL: {public_base_url}")
+                    converted_url = f"{public_base_url}/converted/{output_filename}"
+                    logger.info(f"🔍 Сформированная ссылка: {converted_url}")
                 except Exception as copy_error:
-                    logger.warning(f"⚠️ Не удалось скопировать видео в веб-папку: {copy_error}")
+                    logger.error(f"❌ Не удалось скопировать видео в веб-папку: {copy_error}", exc_info=True)
+            else:
+                logger.warning(f"⚠️ WEBAPP_CONVERTED_DIR не настроен, ссылка не будет отправлена")
             
+            # Если файл слишком большой для отправки, отправляем только ссылку
             if output_size > MAX_UPLOAD_SIZE:
                 # Результат слишком большой для отправки
                 logger.warning(f"⚠️ Результат слишком большой для отправки: {output_size / 1024 / 1024:.1f}MB > {MAX_UPLOAD_SIZE / 1024 / 1024:.0f}MB")
-                await safe_edit_text(status_message,
-                    f"✅ Видео успешно сконвертировано!\n\n"
-                    f"❌ Но результат слишком большой для отправки через бота.\n\n"
-                    f"📊 Размер результата: {output_size / 1024 / 1024:.1f}MB\n"
-                    f"⚠️ Максимальный размер для отправки: {MAX_UPLOAD_SIZE / 1024 / 1024:.0f}MB\n\n"
-                    f"💡 **Решения:**\n\n"
-                    f"1. Отправьте ссылку на видео файл для конвертации\n"
-                    f"2. Используйте локальный Bot API сервер для работы с большими файлами"
-                )
+                if converted_url:
+                    await safe_edit_text(status_message,
+                        f"✅ **Видео успешно сконвертировано!**\n\n"
+                        f"📁 Файл: `{os.path.basename(output_path)}`\n"
+                        f"📊 Размер: {output_size / 1024 / 1024:.2f} MB\n"
+                        f"⚠️ Файл слишком большой для отправки через бота.\n\n"
+                        f"🔗 **Ссылка на сконвертированный файл:**\n{converted_url}",
+                        parse_mode='Markdown',
+                        reply_markup=get_main_menu_keyboard()
+                    )
+                    logger.info(f"✅ Ссылка на сконвертированное видео отправлена: {converted_url}")
+                else:
+                    await safe_edit_text(status_message,
+                        f"✅ Видео успешно сконвертировано!\n\n"
+                        f"❌ Но результат слишком большой для отправки через бота.\n\n"
+                        f"📊 Размер результата: {output_size / 1024 / 1024:.1f}MB\n"
+                        f"⚠️ Максимальный размер для отправки: {MAX_UPLOAD_SIZE / 1024 / 1024:.0f}MB\n\n"
+                        f"💡 **Решения:**\n\n"
+                        f"1. Отправьте ссылку на видео файл для конвертации\n"
+                        f"2. Используйте локальный Bot API сервер для работы с большими файлами",
+                        reply_markup=get_main_menu_keyboard()
+                    )
                 # Удаляем временные файлы
                 try:
                     os.remove(file_path)
@@ -752,32 +782,7 @@ async def _convert_video_background(file_path: str, file_id: str, user_id: int, 
                     del active_conversions[conversion_key]
                 return
             
-            # Отправляем ссылку на сконвертированное видео вместо самого файла
-            # Копируем сконвертированное видео в веб-доступную папку (если еще не скопировано)
-            converted_url = None
-            if WEBAPP_CONVERTED_DIR:
-                try:
-                    import shutil
-                    webapp_converted_path = Path(WEBAPP_CONVERTED_DIR)
-                    webapp_converted_path.mkdir(parents=True, exist_ok=True)
-                    
-                    output_filename = os.path.basename(output_path)
-                    webapp_output_path = webapp_converted_path / output_filename
-                    
-                    # Копируем только если еще не скопировано
-                    if not webapp_output_path.exists():
-                        shutil.copy2(output_path, webapp_output_path)
-                        logger.info(f"✅ Видео скопировано в веб-папку: {webapp_output_path}")
-                    else:
-                        logger.info(f"✅ Видео уже есть в веб-папке: {webapp_output_path}")
-                    
-                    # Формируем публичный URL для сконвертированного видео
-                    public_base_url = os.getenv('PUBLIC_BASE_URL', 'https://example.com')
-                    converted_url = f"{public_base_url}/converted/{output_filename}"
-                except Exception as copy_error:
-                    logger.warning(f"⚠️ Не удалось скопировать видео в веб-папку: {copy_error}")
-            
-            # Отправляем сообщение со ссылкой
+            # Отправляем сообщение со ссылкой (если файл не слишком большой)
             if converted_url:
                 await safe_edit_text(status_message,
                     f"✅ **Видео успешно сконвертировано!**\n\n"
@@ -829,35 +834,40 @@ async def _convert_video_background(file_path: str, file_id: str, user_id: int, 
                             reply_markup=get_main_menu_keyboard()
                         )
             
-            # Удаляем временные файлы
+            # Удаляем временные файлы (но НЕ удаляем файл из веб-папки!)
             try:
-                os.remove(file_path)
-                os.remove(output_path)
-                logger.info("🗑️ Временные файлы удалены")
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.info(f"🗑️ Удален временный входной файл: {file_path}")
+                # НЕ удаляем output_path, если он уже скопирован в веб-папку
+                # Удаляем только если он не в веб-папке
+                if WEBAPP_CONVERTED_DIR:
+                    webapp_converted_path = Path(WEBAPP_CONVERTED_DIR)
+                    output_filename = os.path.basename(output_path)
+                    webapp_output_path = webapp_converted_path / output_filename
+                    if webapp_output_path.exists() and os.path.exists(output_path):
+                        # Если файл уже в веб-папке, удаляем только временный файл
+                        if str(output_path) != str(webapp_output_path):
+                            os.remove(output_path)
+                            logger.info(f"🗑️ Удален временный выходной файл: {output_path} (файл сохранен в веб-папке)")
+                        else:
+                            logger.info(f"✅ Файл сохранен в веб-папке, не удаляем: {output_path}")
+                    else:
+                        # Если файл не скопирован в веб-папку, не удаляем его
+                        logger.warning(f"⚠️ Файл не найден в веб-папке, оставляем временный файл: {output_path}")
+                else:
+                    # Если WEBAPP_CONVERTED_DIR не настроен, удаляем временный файл
+                    if os.path.exists(output_path):
+                        os.remove(output_path)
+                        logger.info(f"🗑️ Удален временный выходной файл: {output_path}")
             except Exception as cleanup_error:
                 logger.warning(f"⚠️ Ошибка при удалении временных файлов: {cleanup_error}")
-            
-            # Отправляем кнопку меню после успешной конвертации
-            keyboard = [
-                [
-                    InlineKeyboardButton("📹 Конвертер", callback_data="mode_converter"),
-                    InlineKeyboardButton("✍️ Генерация", callback_data="mode_generator")
-                ],
-                [
-                    InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_main")
-                ]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await app.bot.send_message(
-                chat_id=chat_id,
-                text="✅ Готово! Что дальше?",
-                reply_markup=reply_markup
-            )
-            logger.info("✅ Обработка видео завершена успешно")
             
             # Удаляем из активных конвертаций
             if conversion_key in active_conversions:
                 del active_conversions[conversion_key]
+            
+            logger.info("✅ Обработка видео завершена успешно")
         else:
             logger.error("❌ Не удалось сконвертировать видео")
             await safe_edit_text(status_message,
@@ -1172,7 +1182,8 @@ async def handle_video_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit_text(status_message,
             "🔄 Конвертирую видео в MP4 1920x1080...\n\n"
             "⏳ Это может занять некоторое время.\n"
-            "💡 Вы можете продолжать пользоваться ботом - я уведомлю вас, когда конвертация завершится!"
+            "💡 Вы можете продолжать пользоваться ботом - я уведомлю вас, когда конвертация завершится!",
+            reply_markup=get_main_menu_keyboard()
         )
         
         # Сохраняем информацию о конвертации
@@ -1261,7 +1272,8 @@ async def handle_video_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit_text(status_message,
             "🔄 Конвертирую видео в MP4 1920x1080...\n\n"
             "⏳ Это может занять некоторое время.\n"
-            "💡 Вы можете продолжать пользоваться ботом - я уведомлю вас, когда конвертация завершится!"
+            "💡 Вы можете продолжать пользоваться ботом - я уведомлю вас, когда конвертация завершится!",
+            reply_markup=get_main_menu_keyboard()
         )
         
         # Сохраняем информацию о конвертации
