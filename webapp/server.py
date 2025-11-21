@@ -97,71 +97,67 @@ async def upload_form():
                 padding: 0;
                 box-sizing: border-box;
             }
+            :root {
+                --tg-theme-bg-color: #ffffff;
+                --tg-theme-text-color: #000000;
+                --tg-theme-hint-color: #999999;
+                --tg-theme-link-color: #3390ec;
+                --tg-theme-button-color: #3390ec;
+                --tg-theme-button-text-color: #ffffff;
+                --tg-theme-secondary-bg-color: #f1f1f1;
+            }
             body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-                background: #1a1a1a;
-                color: #e0e0e0;
-                padding: 20px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                background: var(--tg-theme-bg-color, #ffffff);
+                color: var(--tg-theme-text-color, #000000);
+                padding: 16px;
                 min-height: 100vh;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
+                line-height: 1.5;
             }
             .container {
                 max-width: 600px;
                 width: 100%;
-                background: #2c2c2c;
-                border-radius: 20px;
-                padding: 40px;
-                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-                border: 1px solid rgba(139, 92, 246, 0.2);
+                margin: 0 auto;
             }
             h1 {
-                text-align: center;
-                margin-bottom: 30px;
-                color: #ffffff;
-                font-size: 28px;
+                margin-bottom: 24px;
+                color: var(--tg-theme-text-color, #000000);
+                font-size: 24px;
                 font-weight: 600;
-                background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                background-clip: text;
+            }
+            .nav-links {
+                display: flex;
+                gap: 8px;
+                margin-bottom: 24px;
+                flex-wrap: wrap;
+            }
+            .nav-btn {
+                padding: 10px 16px;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                text-decoration: none;
+                font-size: 14px;
+                font-weight: 500;
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                color: var(--tg-theme-text-color, #000000);
+                transition: background-color 0.2s;
+            }
+            .nav-btn:active {
+                background: #e0e0e0;
             }
             .upload-area {
-                border: 2px dashed #8b5cf6;
-                border-radius: 16px;
-                padding: 50px 20px;
+                border: 2px dashed #d0d0d0;
+                border-radius: 8px;
+                padding: 40px 20px;
                 text-align: center;
                 cursor: pointer;
-                transition: all 0.3s ease;
-                background: rgba(139, 92, 246, 0.05);
-                position: relative;
-                overflow: hidden;
-            }
-            .upload-area::before {
-                content: '';
-                position: absolute;
-                top: 0;
-                left: -100%;
-                width: 100%;
-                height: 100%;
-                background: linear-gradient(90deg, transparent, rgba(139, 92, 246, 0.1), transparent);
-                transition: left 0.5s;
-            }
-            .upload-area:hover {
-                border-color: #a78bfa;
-                background: rgba(139, 92, 246, 0.1);
-                transform: translateY(-2px);
-                box-shadow: 0 4px 20px rgba(139, 92, 246, 0.3);
-            }
-            .upload-area:hover::before {
-                left: 100%;
+                transition: border-color 0.2s;
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                margin-bottom: 16px;
             }
             .upload-area.dragover {
-                border-color: #3b82f6;
-                background: rgba(59, 130, 246, 0.15);
-                transform: scale(1.02);
+                border-color: var(--tg-theme-button-color, #3390ec);
+                background: #f0f7ff;
             }
             input[type="file"] {
                 display: none;
@@ -169,107 +165,136 @@ async def upload_form():
             .file-label {
                 display: block;
                 cursor: pointer;
-                color: #a78bfa;
+                color: var(--tg-theme-text-color, #000000);
                 font-weight: 500;
-                font-size: 16px;
+                font-size: 15px;
             }
             .file-info {
-                margin-top: 20px;
-                padding: 15px;
-                background: #1a1a1a;
-                border-radius: 12px;
+                margin-top: 16px;
+                padding: 12px;
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                border-radius: 8px;
                 display: none;
-                border: 1px solid rgba(139, 92, 246, 0.3);
-                color: #e0e0e0;
+                border: 1px solid #e0e0e0;
+                color: var(--tg-theme-text-color, #000000);
+                font-size: 14px;
             }
             .file-info.show {
                 display: block;
             }
+            input[type="text"] {
+                width: 100%;
+                padding: 10px 12px;
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
+                font-size: 14px;
+                background: var(--tg-theme-bg-color, #ffffff);
+                color: var(--tg-theme-text-color, #000000);
+                margin-top: 8px;
+            }
+            input[type="text"]:focus {
+                outline: none;
+                border-color: var(--tg-theme-button-color, #3390ec);
+            }
+            label {
+                display: block;
+                margin-bottom: 8px;
+                color: var(--tg-theme-text-color, #000000);
+                font-weight: 500;
+                font-size: 14px;
+            }
             button {
                 width: 100%;
-                padding: 16px 24px;
-                margin-top: 20px;
-                background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
-                color: #ffffff;
-                border: none;
-                border-radius: 12px;
-                font-size: 16px;
-                font-weight: 600;
+                padding: 12px 16px;
+                margin-top: 16px;
+                background: var(--tg-theme-button-color, #3390ec);
+                color: var(--tg-theme-button-text-color, #ffffff);
+                border: 1px solid var(--tg-theme-button-color, #3390ec);
+                border-radius: 8px;
+                font-size: 15px;
+                font-weight: 500;
                 cursor: pointer;
-                transition: all 0.3s ease;
-                box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
-            }
-            button:hover:not(:disabled) {
-                transform: translateY(-2px);
-                box-shadow: 0 6px 20px rgba(139, 92, 246, 0.5);
+                transition: opacity 0.2s;
             }
             button:active:not(:disabled) {
-                transform: translateY(0);
+                opacity: 0.8;
             }
             button:disabled {
                 opacity: 0.5;
                 cursor: not-allowed;
-                transform: none;
             }
             .progress {
                 width: 100%;
-                height: 10px;
-                background: #1a1a1a;
-                border-radius: 10px;
-                margin-top: 20px;
+                height: 6px;
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                border-radius: 3px;
+                margin-top: 16px;
                 overflow: hidden;
                 display: none;
-                border: 1px solid rgba(139, 92, 246, 0.3);
+                border: 1px solid #e0e0e0;
             }
             .progress.show {
                 display: block;
             }
             .progress-bar {
                 height: 100%;
-                background: linear-gradient(90deg, #8b5cf6 0%, #3b82f6 100%);
+                background: var(--tg-theme-button-color, #3390ec);
                 width: 0%;
                 transition: width 0.3s ease;
-                box-shadow: 0 0 10px rgba(139, 92, 246, 0.5);
             }
             .message {
-                margin-top: 20px;
-                padding: 16px;
-                border-radius: 12px;
+                margin-top: 16px;
+                padding: 12px 16px;
+                border-radius: 8px;
                 display: none;
-                font-weight: 500;
+                font-size: 14px;
+                border: 1px solid;
             }
             .message.show {
                 display: block;
             }
             .message.success {
-                background: rgba(34, 197, 94, 0.15);
-                color: #4ade80;
-                border: 1px solid rgba(34, 197, 94, 0.3);
+                background: #f0f9ff;
+                color: #0369a1;
+                border-color: #bae6fd;
             }
             .message.error {
-                background: rgba(239, 68, 68, 0.15);
-                color: #f87171;
-                border: 1px solid rgba(239, 68, 68, 0.3);
+                background: #fef2f2;
+                color: #991b1b;
+                border-color: #fecaca;
             }
             .video-url {
-                margin-top: 20px;
-                padding: 16px;
-                background: #1a1a1a;
-                border-radius: 12px;
+                margin-top: 16px;
+                padding: 12px;
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                border-radius: 8px;
                 word-break: break-all;
                 display: none;
-                border: 1px solid rgba(139, 92, 246, 0.3);
-                color: #a78bfa;
+                border: 1px solid #e0e0e0;
+                color: var(--tg-theme-link-color, #3390ec);
+                font-size: 13px;
             }
             .video-url.show {
                 display: block;
             }
             .send-button {
-                margin-top: 20px;
+                margin-top: 16px;
                 display: none;
             }
             .send-button.show {
                 display: block;
+            }
+            @media (max-width: 480px) {
+                body {
+                    padding: 12px;
+                }
+                h1 {
+                    font-size: 20px;
+                    margin-bottom: 16px;
+                }
+                .upload-area {
+                    padding: 30px 15px;
+                }
             }
             .videos-list {
                 margin-top: 30px;
@@ -365,36 +390,24 @@ async def upload_form():
     <body>
             <div class="container">
             <h1>🎬 Загрузка видео</h1>
-            <div style="margin-bottom: 30px; display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;">
-                <a href="/files" class="nav-btn" style="display: inline-block; padding: 12px 24px; background: rgba(139, 92, 246, 0.2); color: #a78bfa; text-decoration: none; border-radius: 12px; font-weight: 600; border: 1px solid rgba(139, 92, 246, 0.4); transition: all 0.3s ease;">
-                    📁 Все файлы
-                </a>
-                <a href="/converted" class="nav-btn" style="display: inline-block; padding: 12px 24px; background: rgba(59, 130, 246, 0.2); color: #60a5fa; text-decoration: none; border-radius: 12px; font-weight: 600; border: 1px solid rgba(59, 130, 246, 0.4); transition: all 0.3s ease;">
-                    🎬 Сконвертированные
-                </a>
+            <div class="nav-links">
+                <a href="/files" class="nav-btn">Все файлы</a>
+                <a href="/converted" class="nav-btn">Сконвертированные</a>
             </div>
-            <style>
-                .nav-btn:hover {
-                    transform: translateY(-2px);
-                    box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
-                }
-            </style>
             <form id="uploadForm" enctype="multipart/form-data">
                 <div class="upload-area" id="uploadArea">
                     <label for="fileInput" class="file-label">
-                        📁 Нажмите для выбора файла<br>
+                        Нажмите для выбора файла<br>
                         или перетащите видео сюда
                     </label>
                     <input type="file" id="fileInput" name="file" accept="video/*" required>
                 </div>
                 <div class="file-info" id="fileInfo"></div>
                 <div style="margin-top: 20px;">
-                    <label for="fileNameInput" style="display: block; margin-bottom: 8px; color: #a78bfa; font-weight: 500;">
-                        📝 Название файла (необязательно):
+                    <label for="fileNameInput">
+                        Название файла (необязательно):
                     </label>
-                    <input type="text" id="fileNameInput" name="filename" placeholder="Оставьте пустым для автоматического названия" 
-                           style="width: 100%; padding: 12px; border-radius: 12px; border: 1px solid rgba(139, 92, 246, 0.3); 
-                                  background: #1a1a1a; color: #e0e0e0; font-size: 14px; box-sizing: border-box;">
+                    <input type="text" id="fileNameInput" name="filename" placeholder="Оставьте пустым для автоматического названия">
                 </div>
                 <div class="progress" id="progress">
                     <div class="progress-bar" id="progressBar"></div>
@@ -657,9 +670,14 @@ async def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Fo
                 
                 if notify_user_id:
                     file_size_mb = file_size / 1024 / 1024
+                    
+                    # Экранируем специальные символы для HTML
+                    # В HTML нужно экранировать только <, >, &
+                    escaped_filename = unique_filename.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                    
                     message_text = (
-                        f"📹 **Новое видео загружено на сайт!**\n\n"
-                        f"📁 Файл: `{unique_filename}`\n"
+                        f"📹 <b>Новое видео загружено на сайт!</b>\n\n"
+                        f"📁 Файл: <code>{escaped_filename}</code>\n"
                         f"📊 Размер: {file_size_mb:.2f} MB\n"
                         f"🔗 Ссылка: {video_url}\n\n"
                         f"❓ Конвертировать ли этот ролик?"
@@ -685,7 +703,7 @@ async def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Fo
                     data = {
                         "chat_id": notify_user_id,
                         "text": message_text,
-                        "parse_mode": "Markdown",
+                        "parse_mode": "HTML",
                         "reply_markup": keyboard
                     }
                     
@@ -787,7 +805,7 @@ async def files_list():
     <html lang="ru">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
         <title>Все файлы</title>
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <style>
@@ -796,217 +814,296 @@ async def files_list():
                 padding: 0;
                 box-sizing: border-box;
             }
+            :root {
+                --tg-theme-bg-color: #ffffff;
+                --tg-theme-text-color: #000000;
+                --tg-theme-hint-color: #999999;
+                --tg-theme-link-color: #3390ec;
+                --tg-theme-button-color: #3390ec;
+                --tg-theme-button-text-color: #ffffff;
+                --tg-theme-secondary-bg-color: #f1f1f1;
+            }
             body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-                background: #1a1a1a;
-                color: #e0e0e0;
-                padding: 20px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                background: var(--tg-theme-bg-color, #ffffff);
+                color: var(--tg-theme-text-color, #000000);
+                padding: 16px;
                 min-height: 100vh;
+                line-height: 1.5;
             }
             .container {
-                max-width: 900px;
+                max-width: 800px;
                 margin: 0 auto;
             }
             h1 {
-                margin-bottom: 30px;
-                color: #ffffff;
-                font-size: 32px;
+                margin-bottom: 24px;
+                color: var(--tg-theme-text-color, #000000);
+                font-size: 24px;
                 font-weight: 600;
-                background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                background-clip: text;
             }
             .header-actions {
                 display: flex;
-                gap: 12px;
-                margin-bottom: 30px;
+                gap: 8px;
+                margin-bottom: 24px;
                 flex-wrap: wrap;
             }
             .btn {
-                padding: 12px 24px;
-                border: none;
-                border-radius: 12px;
+                padding: 10px 16px;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
                 cursor: pointer;
                 font-size: 14px;
-                font-weight: 600;
+                font-weight: 500;
                 text-decoration: none;
                 display: inline-block;
-                transition: all 0.3s ease;
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                color: var(--tg-theme-text-color, #000000);
+                transition: background-color 0.2s;
             }
-            .btn:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
+            .btn:active {
+                background: #e0e0e0;
             }
             .btn-primary {
-                background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
-                color: #ffffff;
-                box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
+                background: var(--tg-theme-button-color, #3390ec);
+                color: var(--tg-theme-button-text-color, #ffffff);
+                border-color: var(--tg-theme-button-color, #3390ec);
             }
-            .btn-secondary {
-                background: rgba(139, 92, 246, 0.2);
-                color: #a78bfa;
-                border: 1px solid rgba(139, 92, 246, 0.4);
-            }
-            .btn-danger {
-                background: rgba(239, 68, 68, 0.2);
-                color: #f87171;
-                border: 1px solid rgba(239, 68, 68, 0.4);
-            }
-            .video-item {
-                background: #2c2c2c;
-                border-radius: 16px;
-                padding: 20px;
-                margin-bottom: 20px;
-                display: flex;
-                flex-direction: column;
-                gap: 15px;
-                border: 1px solid rgba(139, 92, 246, 0.2);
-                transition: all 0.3s ease;
-            }
-            .video-item:hover {
-                border-color: rgba(139, 92, 246, 0.5);
-                transform: translateY(-2px);
-                box-shadow: 0 8px 25px rgba(139, 92, 246, 0.2);
-            }
-            .video-item-header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                flex-wrap: wrap;
-                gap: 10px;
-            }
-            .video-item-name {
-                font-weight: 600;
-                color: #ffffff;
-                word-break: break-all;
-                flex: 1;
-                font-size: 16px;
-            }
-            .video-item-size {
-                color: #a78bfa;
-                font-size: 14px;
-                font-weight: 500;
-            }
-            .video-item-date {
-                font-size: 13px;
-                color: #9ca3af;
-            }
-            .video-item-url {
-                background: #1a1a1a;
-                padding: 14px;
-                border-radius: 12px;
-                word-break: break-all;
-                font-size: 13px;
-                color: #60a5fa;
-                border: 1px solid rgba(139, 92, 246, 0.3);
-                font-family: 'Courier New', monospace;
-            }
-            .video-item-actions {
-                display: flex;
-                gap: 12px;
-                flex-wrap: wrap;
-            }
-            .video-item-btn {
-                flex: 1;
-                min-width: 140px;
-                padding: 12px 20px;
-                border: none;
-                border-radius: 12px;
-                font-size: 14px;
-                font-weight: 600;
-                cursor: pointer;
-                transition: all 0.3s ease;
-            }
-            .video-item-btn:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
-            }
-            .btn-copy {
-                background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
-                color: #ffffff;
-                box-shadow: 0 4px 15px rgba(139, 92, 246, 0.3);
-            }
-            .btn-delete {
-                background: rgba(239, 68, 68, 0.2);
-                color: #f87171;
-                border: 1px solid rgba(239, 68, 68, 0.4);
-            }
-            .btn-delete:hover {
-                background: rgba(239, 68, 68, 0.3);
-                box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
-            }
-            .loading {
-                text-align: center;
-                padding: 60px;
-                color: #9ca3af;
-                font-size: 16px;
-            }
-            .empty-list {
-                text-align: center;
-                padding: 60px;
-                color: #9ca3af;
-                font-size: 16px;
+            .btn-primary:active {
+                opacity: 0.8;
             }
             .message {
-                padding: 16px;
-                border-radius: 12px;
-                margin-bottom: 20px;
+                padding: 12px 16px;
+                border-radius: 8px;
+                margin-bottom: 16px;
                 display: none;
-                font-weight: 500;
+                font-size: 14px;
+                border: 1px solid;
             }
             .message.show {
                 display: block;
             }
             .message.success {
-                background: rgba(34, 197, 94, 0.15);
-                color: #4ade80;
-                border: 1px solid rgba(34, 197, 94, 0.3);
+                background: #f0f9ff;
+                color: #0369a1;
+                border-color: #bae6fd;
             }
             .message.error {
-                background: rgba(239, 68, 68, 0.15);
-                color: #f87171;
-                border: 1px solid rgba(239, 68, 68, 0.3);
+                background: #fef2f2;
+                color: #991b1b;
+                border-color: #fecaca;
             }
             .stats {
-                background: #2c2c2c;
-                padding: 24px;
-                border-radius: 16px;
-                margin-bottom: 30px;
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                padding: 16px;
+                border-radius: 8px;
+                margin-bottom: 24px;
                 display: flex;
                 justify-content: space-around;
                 flex-wrap: wrap;
-                gap: 30px;
-                border: 1px solid rgba(139, 92, 246, 0.2);
+                gap: 16px;
+                border: 1px solid #e0e0e0;
             }
             .stat-item {
                 text-align: center;
             }
             .stat-value {
-                font-size: 32px;
-                font-weight: 700;
-                background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                background-clip: text;
+                font-size: 24px;
+                font-weight: 600;
+                color: var(--tg-theme-text-color, #000000);
             }
             .stat-label {
+                font-size: 12px;
+                color: var(--tg-theme-hint-color, #999999);
+                margin-top: 4px;
+            }
+            .video-item {
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                border-radius: 8px;
+                padding: 16px;
+                margin-bottom: 12px;
+                border: 1px solid #e0e0e0;
+            }
+            .video-item-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-bottom: 8px;
+            }
+            .video-item-name {
+                font-weight: 500;
+                color: var(--tg-theme-text-color, #000000);
+                word-break: break-word;
+                flex: 1;
+                font-size: 15px;
+                min-width: 0;
+            }
+            .video-item-size {
+                color: var(--tg-theme-hint-color, #999999);
                 font-size: 13px;
-                color: #9ca3af;
+                white-space: nowrap;
+            }
+            .video-item-date {
+                font-size: 12px;
+                color: var(--tg-theme-hint-color, #999999);
+                margin-bottom: 12px;
+            }
+            .video-item-url {
+                background: #ffffff;
+                padding: 10px;
+                border-radius: 6px;
+                word-break: break-all;
+                font-size: 12px;
+                color: var(--tg-theme-link-color, #3390ec);
+                border: 1px solid #e0e0e0;
+                font-family: 'Courier New', monospace;
+                margin-bottom: 12px;
+            }
+            .video-item-actions {
+                display: flex;
+                gap: 8px;
+            }
+            .video-item-btn {
+                flex: 1;
+                padding: 10px 16px;
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
+                font-size: 14px;
+                font-weight: 500;
+                cursor: pointer;
+                background: #ffffff;
+                color: var(--tg-theme-text-color, #000000);
+                transition: background-color 0.2s;
+            }
+            .video-item-btn:active {
+                background: #f0f0f0;
+            }
+            .btn-copy {
+                background: var(--tg-theme-button-color, #3390ec);
+                color: var(--tg-theme-button-text-color, #ffffff);
+                border-color: var(--tg-theme-button-color, #3390ec);
+            }
+            .btn-copy:active {
+                opacity: 0.8;
+            }
+            .btn-delete {
+                background: #ffffff;
+                color: #dc2626;
+                border-color: #dc2626;
+            }
+            .btn-delete:active {
+                background: #fef2f2;
+            }
+            .loading, .empty-list {
+                text-align: center;
+                padding: 40px 20px;
+                color: var(--tg-theme-hint-color, #999999);
+                font-size: 14px;
+            }
+            /* Модальное окно */
+            .modal-overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 1000;
+                align-items: center;
+                justify-content: center;
+                padding: 16px;
+            }
+            .modal-overlay.show {
+                display: flex;
+            }
+            .modal {
+                background: var(--tg-theme-bg-color, #ffffff);
+                border-radius: 12px;
+                padding: 24px;
+                max-width: 400px;
+                width: 100%;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            }
+            .modal-title {
+                font-size: 18px;
+                font-weight: 600;
+                margin-bottom: 12px;
+                color: var(--tg-theme-text-color, #000000);
+            }
+            .modal-text {
+                font-size: 14px;
+                color: var(--tg-theme-hint-color, #666666);
+                margin-bottom: 20px;
+                word-break: break-word;
+            }
+            .modal-filename {
+                font-weight: 500;
+                color: var(--tg-theme-text-color, #000000);
                 margin-top: 8px;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
+            }
+            .modal-actions {
+                display: flex;
+                gap: 8px;
+            }
+            .modal-btn {
+                flex: 1;
+                padding: 10px 16px;
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
+                font-size: 14px;
+                font-weight: 500;
+                cursor: pointer;
+                transition: background-color 0.2s;
+            }
+            .modal-btn-cancel {
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                color: var(--tg-theme-text-color, #000000);
+            }
+            .modal-btn-cancel:active {
+                background: #e0e0e0;
+            }
+            .modal-btn-confirm {
+                background: #dc2626;
+                color: #ffffff;
+                border-color: #dc2626;
+            }
+            .modal-btn-confirm:active {
+                opacity: 0.8;
+            }
+            @media (max-width: 480px) {
+                body {
+                    padding: 12px;
+                }
+                h1 {
+                    font-size: 20px;
+                    margin-bottom: 16px;
+                }
+                .header-actions {
+                    flex-direction: column;
+                }
+                .btn {
+                    width: 100%;
+                    text-align: center;
+                }
+                .video-item-actions {
+                    flex-direction: column;
+                }
+                .modal {
+                    padding: 20px;
+                }
             }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>📁 Все файлы</h1>
+            <h1>Все файлы</h1>
             
             <div class="header-actions">
-                <a href="/upload" class="btn btn-primary">⬆️ Загрузить видео</a>
-                <a href="/converted" class="btn btn-secondary">🎬 Сконвертированные</a>
-                <button type="button" class="btn btn-secondary" onclick="loadVideosList()">🔄 Обновить</button>
+                <a href="/upload" class="btn btn-primary">Загрузить видео</a>
+                <a href="/converted" class="btn">Сконвертированные</a>
+                <button type="button" class="btn" onclick="loadVideosList()">Обновить</button>
             </div>
             
             <div class="message" id="message"></div>
@@ -1024,6 +1121,21 @@ async def files_list():
             
             <div id="videosListContainer">
                 <div class="loading">Загрузка списка видео...</div>
+            </div>
+        </div>
+        
+        <!-- Модальное окно для удаления -->
+        <div class="modal-overlay" id="deleteModal" onclick="if(event.target === this) closeDeleteModal()">
+            <div class="modal">
+                <div class="modal-title">Удалить файл?</div>
+                <div class="modal-text">
+                    Вы уверены, что хотите удалить этот файл? Это действие нельзя отменить.
+                </div>
+                <div class="modal-filename" id="modalFilename"></div>
+                <div class="modal-actions">
+                    <button class="modal-btn modal-btn-cancel" onclick="closeDeleteModal()">Отмена</button>
+                    <button class="modal-btn modal-btn-confirm" onclick="confirmDelete()">Удалить</button>
+                </div>
             </div>
         </div>
 
@@ -1053,7 +1165,7 @@ async def files_list():
                     const videos = data.videos || [];
                     
                     if (videos.length === 0) {
-                        container.innerHTML = '<div class="empty-list">📭 Видео файлов пока нет</div>';
+                        container.innerHTML = '<div class="empty-list">Видео файлов пока нет</div>';
                         return;
                     }
                     
@@ -1084,17 +1196,17 @@ async def files_list():
                                     <div class="video-item-size">${video.size_mb} MB</div>
                                 </div>
                                 <div class="video-item-date">
-                                    📅 ${dateStr}
+                                    ${dateStr}
                                 </div>
                                 <div class="video-item-url" id="url-${escapeHtml(video.filename)}">
                                     ${escapeHtml(video.url)}
                                 </div>
                                 <div class="video-item-actions">
                                     <button type="button" class="video-item-btn btn-copy" onclick="copyVideoUrl('${escapeHtml(video.url)}', '${escapeHtml(video.filename)}')">
-                                        📋 Копировать ссылку
+                                        Копировать ссылку
                                     </button>
                                     <button type="button" class="video-item-btn btn-delete" onclick="deleteVideo('${escapeHtml(video.filename)}')">
-                                        🗑️ Удалить
+                                        Удалить
                                     </button>
                                 </div>
                             </div>
@@ -1113,7 +1225,7 @@ async def files_list():
             async function copyVideoUrl(url, filename) {
                 try {
                     await navigator.clipboard.writeText(url);
-                    showMessage(`✅ Ссылка на ${filename} скопирована!`, 'success');
+                    showMessage(`Ссылка на ${filename} скопирована`, 'success');
                 } catch (error) {
                     // Fallback для старых браузеров
                     const textArea = document.createElement('textarea');
@@ -1124,7 +1236,7 @@ async def files_list():
                     textArea.select();
                     try {
                         document.execCommand('copy');
-                        showMessage(`✅ Ссылка на ${filename} скопирована!`, 'success');
+                        showMessage(`Ссылка на ${filename} скопирована`, 'success');
                     } catch (err) {
                         showMessage('❌ Не удалось скопировать ссылку', 'error');
                     }
@@ -1132,11 +1244,32 @@ async def files_list():
                 }
             }
 
+            let fileToDelete = null;
+            
+            // Показать модальное окно удаления
+            function showDeleteModal(filename) {
+                fileToDelete = filename;
+                document.getElementById('modalFilename').textContent = filename;
+                document.getElementById('deleteModal').classList.add('show');
+            }
+            
+            // Закрыть модальное окно
+            function closeDeleteModal() {
+                fileToDelete = null;
+                document.getElementById('deleteModal').classList.remove('show');
+            }
+            
             // Удаление видео
             async function deleteVideo(filename) {
-                if (!confirm(`Вы уверены, что хотите удалить видео "${filename}"?`)) {
-                    return;
-                }
+                showDeleteModal(filename);
+            }
+            
+            // Подтверждение удаления
+            async function confirmDelete() {
+                if (!fileToDelete) return;
+                
+                const filename = fileToDelete;
+                closeDeleteModal();
                 
                 try {
                     const response = await fetch(`/api/videos/${encodeURIComponent(filename)}`, {
@@ -1149,14 +1282,14 @@ async def files_list():
                         throw new Error(data.detail || 'Ошибка при удалении');
                     }
                     
-                    showMessage(`✅ Видео ${filename} удалено`, 'success');
+                    showMessage(`Видео ${filename} удалено`, 'success');
                     
                     // Обновляем список
                     setTimeout(() => {
                         loadVideosList();
                     }, 500);
                 } catch (error) {
-                    showMessage(`❌ Ошибка: ${escapeHtml(error.message)}`, 'error');
+                    showMessage(`Ошибка: ${escapeHtml(error.message)}`, 'error');
                 }
             }
 
@@ -1198,7 +1331,7 @@ async def converted_list():
     <html lang="ru">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
         <title>Сконвертированные видео</title>
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <style>
@@ -1207,286 +1340,330 @@ async def converted_list():
                 padding: 0;
                 box-sizing: border-box;
             }
+            :root {
+                --tg-theme-bg-color: #ffffff;
+                --tg-theme-text-color: #000000;
+                --tg-theme-hint-color: #999999;
+                --tg-theme-link-color: #3390ec;
+                --tg-theme-button-color: #3390ec;
+                --tg-theme-button-text-color: #ffffff;
+                --tg-theme-secondary-bg-color: #f1f1f1;
+            }
             body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-                background: #1a1a1a;
-                color: #e0e0e0;
-                padding: 20px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                background: var(--tg-theme-bg-color, #ffffff);
+                color: var(--tg-theme-text-color, #000000);
+                padding: 16px;
                 min-height: 100vh;
+                line-height: 1.5;
             }
             .container {
-                max-width: 900px;
+                max-width: 800px;
                 margin: 0 auto;
             }
             h1 {
-                margin-bottom: 30px;
-                color: #ffffff;
-                font-size: 32px;
+                margin-bottom: 24px;
+                color: var(--tg-theme-text-color, #000000);
+                font-size: 24px;
                 font-weight: 600;
-                background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                background-clip: text;
             }
             .header-actions {
                 display: flex;
-                gap: 12px;
-                margin-bottom: 30px;
+                gap: 8px;
+                margin-bottom: 24px;
                 flex-wrap: wrap;
             }
             .btn {
-                padding: 12px 24px;
-                border: none;
-                border-radius: 12px;
+                padding: 10px 16px;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
                 cursor: pointer;
                 font-size: 14px;
-                font-weight: 600;
+                font-weight: 500;
                 text-decoration: none;
                 display: inline-block;
-                transition: all 0.3s ease;
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                color: var(--tg-theme-text-color, #000000);
+                transition: background-color 0.2s;
             }
-            .btn:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
+            .btn:active {
+                background: #e0e0e0;
             }
             .btn-primary {
-                background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
-                color: #ffffff;
-                box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
+                background: var(--tg-theme-button-color, #3390ec);
+                color: var(--tg-theme-button-text-color, #ffffff);
+                border-color: var(--tg-theme-button-color, #3390ec);
             }
-            .btn-secondary {
-                background: rgba(139, 92, 246, 0.2);
-                color: #a78bfa;
-                border: 1px solid rgba(139, 92, 246, 0.4);
-            }
-            .video-item {
-                background: #2c2c2c;
-                border-radius: 16px;
-                padding: 20px;
-                margin-bottom: 20px;
-                display: flex;
-                flex-direction: column;
-                gap: 15px;
-                border: 1px solid rgba(59, 130, 246, 0.2);
-                transition: all 0.3s ease;
-            }
-            .video-item:hover {
-                border-color: rgba(59, 130, 246, 0.5);
-                transform: translateY(-2px);
-                box-shadow: 0 8px 25px rgba(59, 130, 246, 0.2);
-            }
-            .video-item-header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                flex-wrap: wrap;
-                gap: 10px;
-            }
-            .video-item-name {
-                font-weight: 600;
-                color: #ffffff;
-                word-break: break-all;
-                flex: 1;
-                font-size: 16px;
-            }
-            .video-item-size {
-                color: #60a5fa;
-                font-size: 14px;
-                font-weight: 500;
-            }
-            .video-item-date {
-                font-size: 13px;
-                color: #9ca3af;
-            }
-            .video-item-url {
-                background: #1a1a1a;
-                padding: 14px;
-                border-radius: 12px;
-                word-break: break-all;
-                font-size: 13px;
-                color: #60a5fa;
-                border: 1px solid rgba(59, 130, 246, 0.3);
-                font-family: 'Courier New', monospace;
-            }
-            .video-item-actions {
-                display: flex;
-                gap: 12px;
-                flex-wrap: wrap;
-            }
-            .video-item-btn {
-                flex: 1;
-                min-width: 140px;
-                padding: 12px 20px;
-                border: none;
-                border-radius: 12px;
-                font-size: 14px;
-                font-weight: 600;
-                cursor: pointer;
-                transition: all 0.3s ease;
-            }
-            .video-item-btn:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
-            }
-            .btn-copy {
-                background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
-                color: #ffffff;
-                box-shadow: 0 4px 15px rgba(139, 92, 246, 0.3);
-            }
-            .loading {
-                text-align: center;
-                padding: 60px;
-                color: #9ca3af;
-                font-size: 16px;
-            }
-            .empty-list {
-                text-align: center;
-                padding: 60px;
-                color: #9ca3af;
-                font-size: 16px;
+            .btn-primary:active {
+                opacity: 0.8;
             }
             .message {
-                padding: 16px;
-                border-radius: 12px;
-                margin-bottom: 20px;
+                padding: 12px 16px;
+                border-radius: 8px;
+                margin-bottom: 16px;
                 display: none;
-                font-weight: 500;
+                font-size: 14px;
+                border: 1px solid;
             }
             .message.show {
                 display: block;
             }
             .message.success {
-                background: rgba(34, 197, 94, 0.15);
-                color: #4ade80;
-                border: 1px solid rgba(34, 197, 94, 0.3);
+                background: #f0f9ff;
+                color: #0369a1;
+                border-color: #bae6fd;
             }
             .message.error {
-                background: rgba(239, 68, 68, 0.15);
-                color: #f87171;
-                border: 1px solid rgba(239, 68, 68, 0.3);
+                background: #fef2f2;
+                color: #991b1b;
+                border-color: #fecaca;
             }
             .stats {
-                background: #2c2c2c;
-                padding: 24px;
-                border-radius: 16px;
-                margin-bottom: 30px;
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                padding: 16px;
+                border-radius: 8px;
+                margin-bottom: 24px;
                 display: flex;
                 justify-content: space-around;
                 flex-wrap: wrap;
-                gap: 30px;
-                border: 1px solid rgba(59, 130, 246, 0.2);
+                gap: 16px;
+                border: 1px solid #e0e0e0;
             }
             .stat-item {
                 text-align: center;
             }
             .stat-value {
-                font-size: 32px;
-                font-weight: 700;
-                background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                background-clip: text;
+                font-size: 24px;
+                font-weight: 600;
+                color: var(--tg-theme-text-color, #000000);
             }
             .stat-label {
+                font-size: 12px;
+                color: var(--tg-theme-hint-color, #999999);
+                margin-top: 4px;
+            }
+            .video-item {
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                border-radius: 8px;
+                padding: 16px;
+                margin-bottom: 12px;
+                border: 1px solid #e0e0e0;
+            }
+            .video-item-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-bottom: 8px;
+            }
+            .video-item-name {
+                font-weight: 500;
+                color: var(--tg-theme-text-color, #000000);
+                word-break: break-word;
+                flex: 1;
+                font-size: 15px;
+                min-width: 0;
+            }
+            .video-item-size {
+                color: var(--tg-theme-hint-color, #999999);
                 font-size: 13px;
-                color: #9ca3af;
-                margin-top: 8px;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
+                white-space: nowrap;
+            }
+            .video-item-date {
+                font-size: 12px;
+                color: var(--tg-theme-hint-color, #999999);
+                margin-bottom: 12px;
+            }
+            .video-item-url {
+                background: #ffffff;
+                padding: 10px;
+                border-radius: 6px;
+                word-break: break-all;
+                font-size: 12px;
+                color: var(--tg-theme-link-color, #3390ec);
+                border: 1px solid #e0e0e0;
+                font-family: 'Courier New', monospace;
+                margin-bottom: 12px;
+            }
+            .video-item-actions {
+                display: flex;
+                gap: 8px;
+            }
+            .video-item-btn {
+                flex: 1;
+                padding: 10px 16px;
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
+                font-size: 14px;
+                font-weight: 500;
+                cursor: pointer;
+                background: #ffffff;
+                color: var(--tg-theme-text-color, #000000);
+                transition: background-color 0.2s;
+            }
+            .video-item-btn:active {
+                background: #f0f0f0;
+            }
+            .btn-copy {
+                background: var(--tg-theme-button-color, #3390ec);
+                color: var(--tg-theme-button-text-color, #ffffff);
+                border-color: var(--tg-theme-button-color, #3390ec);
+            }
+            .btn-copy:active {
+                opacity: 0.8;
+            }
+            .btn-delete {
+                background: #ffffff;
+                color: #dc2626;
+                border-color: #dc2626;
+            }
+            .btn-delete:active {
+                background: #fef2f2;
+            }
+            .loading, .empty-list {
+                text-align: center;
+                padding: 40px 20px;
+                color: var(--tg-theme-hint-color, #999999);
+                font-size: 14px;
             }
             /* Модальное окно */
-            .modal {
+            .modal-overlay {
                 display: none;
                 position: fixed;
-                z-index: 1000;
-                left: 0;
                 top: 0;
-                width: 100%;
-                height: 100%;
-                background-color: rgba(0, 0, 0, 0.7);
-                backdrop-filter: blur(4px);
-            }
-            .modal.show {
-                display: flex;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 1000;
                 align-items: center;
                 justify-content: center;
+                padding: 16px;
             }
-            .modal-content {
-                background: #2c2c2c;
-                border-radius: 20px;
-                padding: 30px;
+            .modal-overlay.show {
+                display: flex;
+            }
+            .modal {
+                background: var(--tg-theme-bg-color, #ffffff);
+                border-radius: 12px;
+                padding: 24px;
                 max-width: 400px;
-                width: 90%;
-                border: 1px solid rgba(139, 92, 246, 0.3);
-                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+                width: 100%;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
             }
             .modal-title {
-                font-size: 20px;
+                font-size: 18px;
                 font-weight: 600;
-                color: #ffffff;
-                margin-bottom: 15px;
+                margin-bottom: 12px;
+                color: var(--tg-theme-text-color, #000000);
             }
             .modal-text {
-                color: #e0e0e0;
-                margin-bottom: 25px;
-                line-height: 1.5;
+                font-size: 14px;
+                color: var(--tg-theme-hint-color, #666666);
+                margin-bottom: 20px;
+                word-break: break-word;
+            }
+            .modal-filename {
+                font-weight: 500;
+                color: var(--tg-theme-text-color, #000000);
+                margin-top: 8px;
             }
             .modal-actions {
                 display: flex;
-                gap: 12px;
-                justify-content: flex-end;
+                gap: 8px;
             }
             .modal-btn {
-                padding: 12px 24px;
-                border: none;
-                border-radius: 12px;
+                flex: 1;
+                padding: 10px 16px;
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
                 font-size: 14px;
-                font-weight: 600;
+                font-weight: 500;
                 cursor: pointer;
-                transition: all 0.3s ease;
+                transition: background-color 0.2s;
             }
             .modal-btn-cancel {
-                background: rgba(139, 92, 246, 0.2);
-                color: #a78bfa;
-                border: 1px solid rgba(139, 92, 246, 0.4);
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                color: var(--tg-theme-text-color, #000000);
             }
-            .modal-btn-cancel:hover {
-                background: rgba(139, 92, 246, 0.3);
+            .modal-btn-cancel:active {
+                background: #e0e0e0;
             }
             .modal-btn-confirm {
-                background: #ef4444;
-                color: #ffffff;
-            }
-            .modal-btn-confirm:hover {
                 background: #dc2626;
-                transform: translateY(-2px);
-                box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);
+                color: #ffffff;
+                border-color: #dc2626;
+            }
+            .modal-btn-confirm:active {
+                opacity: 0.8;
+            }
+            @media (max-width: 480px) {
+                body {
+                    padding: 12px;
+                }
+                h1 {
+                    font-size: 20px;
+                    margin-bottom: 16px;
+                }
+                .header-actions {
+                    flex-direction: column;
+                }
+                .btn {
+                    width: 100%;
+                    text-align: center;
+                }
+                .video-item-actions {
+                    flex-direction: column;
+                }
+                .modal {
+                    padding: 20px;
+                }
             }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🎬 Сконвертированные видео</h1>
+            <h1>Сконвертированные видео</h1>
             
             <div class="header-actions">
-                <a href="/upload" class="btn btn-primary">⬆️ Загрузить видео</a>
-                <a href="/files" class="btn btn-secondary">📁 Все файлы</a>
-                <button type="button" class="btn btn-secondary" onclick="loadVideosList()">🔄 Обновить</button>
+                <a href="/upload" class="btn btn-primary">Загрузить видео</a>
+                <a href="/files" class="btn">Все файлы</a>
+                <button type="button" class="btn" onclick="loadVideosList()">Обновить</button>
             </div>
             
             <div class="message" id="message"></div>
             
-            <!-- Модальное окно подтверждения удаления -->
-            <div class="modal" id="deleteModal">
-                <div class="modal-content">
-                    <div class="modal-title">🗑️ Удаление файла</div>
-                    <div class="modal-text" id="modalText">Вы уверены, что хотите удалить этот файл? Это действие нельзя отменить.</div>
-                    <div class="modal-actions">
-                        <button type="button" class="modal-btn modal-btn-cancel" onclick="closeDeleteModal()">Отмена</button>
-                        <button type="button" class="modal-btn modal-btn-confirm" id="confirmDeleteBtn">Удалить</button>
-                    </div>
+            <div class="stats" id="stats" style="display: none;">
+                <div class="stat-item">
+                    <div class="stat-value" id="totalFiles">0</div>
+                    <div class="stat-label">Всего файлов</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="totalSize">0 MB</div>
+                    <div class="stat-label">Общий размер</div>
                 </div>
             </div>
+            
+            <div id="videosListContainer">
+                <div class="loading">Загрузка списка видео...</div>
+            </div>
+        </div>
+        
+        <!-- Модальное окно для удаления -->
+        <div class="modal-overlay" id="deleteModal" onclick="if(event.target === this) closeDeleteModal()">
+            <div class="modal">
+                <div class="modal-title">Удалить файл?</div>
+                <div class="modal-text">
+                    Вы уверены, что хотите удалить этот файл? Это действие нельзя отменить.
+                </div>
+                <div class="modal-filename" id="modalFilename"></div>
+                <div class="modal-actions">
+                    <button class="modal-btn modal-btn-cancel" onclick="closeDeleteModal()">Отмена</button>
+                    <button class="modal-btn modal-btn-confirm" onclick="confirmDelete()">Удалить</button>
+                </div>
+            </div>
+        </div>
             
             <div class="stats" id="stats" style="display: none;">
                 <div class="stat-item">
@@ -1530,7 +1707,7 @@ async def converted_list():
                     const videos = data.videos || [];
                     
                     if (videos.length === 0) {
-                        container.innerHTML = '<div class="empty-list">📭 Сконвертированных видео пока нет</div>';
+                        container.innerHTML = '<div class="empty-list">Сконвертированных видео пока нет</div>';
                         return;
                     }
                     
@@ -1561,17 +1738,17 @@ async def converted_list():
                                     <div class="video-item-size">${video.size_mb} MB</div>
                                 </div>
                                 <div class="video-item-date">
-                                    📅 ${dateStr}
+                                    ${dateStr}
                                 </div>
                                 <div class="video-item-url" id="url-${escapeHtml(video.filename)}">
                                     ${escapeHtml(video.url)}
                                 </div>
                                 <div class="video-item-actions">
                                     <button type="button" class="video-item-btn btn-copy" onclick="copyVideoUrl('${escapeHtml(video.url)}', '${escapeHtml(video.filename)}')">
-                                        📋 Копировать ссылку
+                                        Копировать ссылку
                                     </button>
                                     <button type="button" class="video-item-btn btn-delete" onclick="deleteVideo('${escapeHtml(video.filename)}')">
-                                        🗑️ Удалить
+                                        Удалить
                                     </button>
                                 </div>
                             </div>
@@ -1590,7 +1767,7 @@ async def converted_list():
             async function copyVideoUrl(url, filename) {
                 try {
                     await navigator.clipboard.writeText(url);
-                    showMessage(`✅ Ссылка на ${filename} скопирована!`, 'success');
+                    showMessage(`Ссылка на ${filename} скопирована`, 'success');
                 } catch (error) {
                     // Fallback для старых браузеров
                     const textArea = document.createElement('textarea');
@@ -1601,7 +1778,7 @@ async def converted_list():
                     textArea.select();
                     try {
                         document.execCommand('copy');
-                        showMessage(`✅ Ссылка на ${filename} скопирована!`, 'success');
+                        showMessage(`Ссылка на ${filename} скопирована`, 'success');
                     } catch (err) {
                         showMessage('❌ Не удалось скопировать ссылку', 'error');
                     }
@@ -1628,21 +1805,19 @@ async def converted_list():
                 return div.innerHTML;
             }
 
-            // Модальное окно для удаления
             let fileToDelete = null;
             
+            // Показать модальное окно удаления
             function showDeleteModal(filename) {
                 fileToDelete = filename;
-                const modal = document.getElementById('deleteModal');
-                const modalText = document.getElementById('modalText');
-                modalText.textContent = `Вы уверены, что хотите удалить файл "${filename}"? Это действие нельзя отменить.`;
-                modal.classList.add('show');
+                document.getElementById('modalFilename').textContent = filename;
+                document.getElementById('deleteModal').classList.add('show');
             }
             
+            // Закрыть модальное окно
             function closeDeleteModal() {
-                const modal = document.getElementById('deleteModal');
-                modal.classList.remove('show');
                 fileToDelete = null;
+                document.getElementById('deleteModal').classList.remove('show');
             }
             
             // Удаление видео
@@ -1662,16 +1837,20 @@ async def converted_list():
                         method: 'DELETE'
                     });
                     
-                    if (response.ok) {
-                        showMessage(`✅ Файл ${filename} успешно удален!`, 'success');
-                        // Обновляем список после удаления
-                        setTimeout(() => loadVideosList(), 1000);
-                    } else {
-                        const error = await response.json();
-                        showMessage(`❌ Ошибка при удалении: ${error.detail || 'Неизвестная ошибка'}`, 'error');
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Ошибка при удалении');
                     }
+                    
+                    showMessage(`Видео ${filename} удалено`, 'success');
+                    
+                    // Обновляем список
+                    setTimeout(() => {
+                        loadVideosList();
+                    }, 500);
                 } catch (error) {
-                    showMessage(`❌ Ошибка при удалении: ${escapeHtml(error.message)}`, 'error');
+                    showMessage(`Ошибка: ${escapeHtml(error.message)}`, 'error');
                 }
             }
             
