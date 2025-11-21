@@ -382,9 +382,10 @@ def _convert_video_sync(input_path: str, output_path: str):
         
         # Настраиваем выходной поток
         # Для больших файлов используем более быстрый preset и оптимизированные настройки
+        # Используем c:a вместо acodec, чтобы избежать проблем с библиотекой ffmpeg-python
         output_kwargs = {
-            'acodec': 'aac',
-            'audio_bitrate': '192k',
+            'c:a': 'aac',  # Используем c:a вместо acodec для совместимости
+            'b:a': '192k',  # Используем b:a вместо audio_bitrate
             'movflags': 'faststart',  # Для быстрого воспроизведения в браузере
         }
         
@@ -392,12 +393,12 @@ def _convert_video_sync(input_path: str, output_path: str):
         if video_codec != 'h264_nvenc':
             output_kwargs['pix_fmt'] = 'yuv420p'  # Совместимость с большинством устройств
         
-        # Добавляем видеокодек
-        output_kwargs['vcodec'] = video_codec
+        # Добавляем видеокодек - используем c:v вместо vcodec для совместимости
+        output_kwargs['c:v'] = video_codec
         
         # Добавляем битрейт (если не указан в hw_output_options)
         if 'b:v' not in hw_output_options and video_codec == 'libx264':
-            output_kwargs['video_bitrate'] = '5000k'
+            output_kwargs['b:v'] = '5000k'
         
         # Добавляем настройки для программного кодирования
         if video_codec == 'libx264':
