@@ -261,7 +261,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['mode'] = 'converter'
         # Показываем список видео из папки upload
         try:
-            import os
             from pathlib import Path
             
             # Путь к папке upload (videos) в webapp
@@ -495,7 +494,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Показываем список сконвертированных видео
         try:
             from pathlib import Path
-            import os
             
             # Путь к папке converted в webapp
             converted_dir = Path("webapp/converted")
@@ -593,10 +591,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 # Спрашиваем как назвать сконвертированный файл
                 await safe_edit_text(query.message,
-                    f"📹 Выбрано видео: `{filename}`\n\n"
-                    f"📝 Как назвать сконвертированный файл?\n\n"
+                    f"Выбрано видео: {filename}\n\n"
+                    f"Как назвать сконвертированный файл?\n\n"
                     f"Отправьте название (без расширения) или нажмите /skip для автоматического названия.",
-                    parse_mode='Markdown',
                     reply_markup=get_main_menu_keyboard()
                 )
                 
@@ -1659,6 +1656,65 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик текстовых сообщений"""
     text = update.message.text.strip()
     
+    # Проверяем, ожидается ли имя файла для конвертации (это должно быть ПЕРВЫМ!)
+    if context.user_data.get('waiting_for_filename'):
+        try:
+            custom_filename = text.strip()
+            selected_video = context.user_data.get('selected_video')
+            conversion_type = context.user_data.get('conversion_type')
+            
+            # Очищаем флаги
+            context.user_data['waiting_for_filename'] = False
+            context.user_data['selected_video'] = None
+            context.user_data['conversion_type'] = None
+            
+            if not selected_video:
+                await update.message.reply_text(
+                    "Ошибка: видео не выбрано. Пожалуйста, выберите видео заново.",
+                    reply_markup=get_main_menu_keyboard()
+                )
+                return
+            
+            # Если пользователь отправил /skip, используем автоматическое имя
+            if custom_filename.lower() == '/skip' or not custom_filename:
+                custom_filename = None
+            
+            # Запускаем конвертацию
+            if conversion_type == 'from_upload':
+                # Конвертация из папки upload
+                public_base_url = os.getenv('PUBLIC_BASE_URL', 'https://example.com')
+                video_url = f"{public_base_url}/videos/{selected_video}"
+                
+                await update.message.reply_text(
+                    f"Начинаю конвертацию видео из папки upload...\n\n"
+                    f"Файл: {selected_video}",
+                    reply_markup=get_main_menu_keyboard()
+                )
+                
+                # Запускаем конвертацию в фоне
+                asyncio.create_task(
+                    _convert_uploaded_video_background(
+                        video_url=video_url,
+                        filename=selected_video,
+                        user_id=update.effective_user.id,
+                        chat_id=update.effective_chat.id,
+                        status_message=update.message,
+                        custom_output_name=custom_filename
+                    )
+                )
+            else:
+                await update.message.reply_text(
+                    "Неизвестный тип конвертации",
+                    reply_markup=get_main_menu_keyboard()
+                )
+        except Exception as e:
+            logger.error(f"Ошибка при обработке имени файла: {e}", exc_info=True)
+            await update.message.reply_text(
+                f"Ошибка:\n{str(e)}",
+                reply_markup=get_main_menu_keyboard()
+            )
+        return
+    
     # Проверяем, является ли текст URL (начинается с http:// или https://)
     is_url = text.startswith('http://') or text.startswith('https://')
     
@@ -1673,11 +1729,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             # Режим конвертера, но не URL - просим отправить видео или ссылку
             await update.message.reply_text(
-                "📹 **Режим: Конвертер**\n\n"
+                "Режим: Конвертер\n\n"
                 "Отправьте мне:\n"
-                "• 📹 **Видео** (до 2GB) - отправьте как видео, не как файл\n"
-                "• 🔗 **Ссылку на видео** - прямая ссылка на видео файл\n\n"
-                "Используйте /reset для смены режима."
+                "• Видео (до 2GB) - отправьте как видео, не как файл\n"
+                "• Ссылку на видео - прямая ссылка на видео файл\n\n"
+                "Используйте /reset для смены режима.",
+                reply_markup=get_main_menu_keyboard()
             )
             return
     
