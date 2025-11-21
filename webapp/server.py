@@ -614,7 +614,11 @@ async def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Fo
         # Отправляем уведомление боту о загрузке файла (если настроен токен)
         if TELEGRAM_BOT_TOKEN:
             try:
-                import httpx
+                # Используем стандартную библиотеку для отправки HTTP запросов
+                import urllib.request
+                import urllib.parse
+                import json
+                
                 # Получаем user_id из параметров формы (передается из Telegram WebApp)
                 notify_user_id = user_id or TELEGRAM_NOTIFY_CHAT_ID
                 logger.info(f"🔍 notify_user_id для отправки: {notify_user_id}")
@@ -642,24 +646,36 @@ async def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Fo
                     # Отправляем сообщение через Telegram Bot API
                     bot_api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
                     logger.info(f"🔍 Отправка уведомления: user_id={notify_user_id}, filename={unique_filename}")
-                    async with httpx.AsyncClient(timeout=10.0) as client:
-                        response = await client.post(
-                            bot_api_url,
-                            json={
-                                "chat_id": notify_user_id,
-                                "text": message_text,
-                                "parse_mode": "Markdown",
-                                "reply_markup": keyboard
-                            }
-                        )
-                        if response.status_code == 200:
-                            logger.info(f"📤 Уведомление отправлено боту о загрузке: {unique_filename}")
-                        else:
-                            logger.warning(f"⚠️ Не удалось отправить уведомление боту: {response.status_code} - {response.text}")
+                    
+                    # Подготавливаем данные для отправки
+                    data = {
+                        "chat_id": notify_user_id,
+                        "text": message_text,
+                        "parse_mode": "Markdown",
+                        "reply_markup": keyboard
+                    }
+                    
+                    # Отправляем синхронный HTTP запрос в отдельном потоке (чтобы не блокировать event loop)
+                    import asyncio
+                    
+                    def send_notification():
+                        data_json = json.dumps(data).encode('utf-8')
+                        req = urllib.request.Request(bot_api_url, data=data_json, headers={'Content-Type': 'application/json'})
+                        with urllib.request.urlopen(req, timeout=10) as response:
+                            return json.loads(response.read().decode('utf-8'))
+                    
+                    # Выполняем в отдельном потоке
+                    loop = asyncio.get_event_loop()
+                    response_data = await loop.run_in_executor(None, send_notification)
+                    
+                    if response_data.get('ok'):
+                        logger.info(f"📤 Уведомление отправлено боту о загрузке: {unique_filename}")
+                    else:
+                        logger.warning(f"⚠️ Не удалось отправить уведомление боту: {response_data}")
                 else:
                     logger.warning(f"⚠️ user_id не получен из формы и TELEGRAM_NOTIFY_CHAT_ID не настроен. user_id из формы: {user_id}")
             except Exception as e:
-                logger.warning(f"⚠️ Не удалось отправить уведомление боту: {e}")
+                logger.warning(f"⚠️ Не удалось отправить уведомление боту: {e}", exc_info=True)
         
         return {
             "status": "success",
