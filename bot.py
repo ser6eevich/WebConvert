@@ -752,25 +752,62 @@ async def _convert_video_background(file_path: str, file_id: str, user_id: int, 
                     del active_conversions[conversion_key]
                 return
             
-            # Отправляем конвертированное видео
-            await safe_edit_text(status_message, "✅ Видео успешно сконвертировано! Отправляю...")
-            logger.info("📤 Начинаю отправку сконвертированного видео")
+            # Отправляем ссылку на сконвертированное видео вместо самого файла
+            # Копируем сконвертированное видео в веб-доступную папку (если еще не скопировано)
+            converted_url = None
+            if WEBAPP_CONVERTED_DIR:
+                try:
+                    import shutil
+                    webapp_converted_path = Path(WEBAPP_CONVERTED_DIR)
+                    webapp_converted_path.mkdir(parents=True, exist_ok=True)
+                    
+                    output_filename = os.path.basename(output_path)
+                    webapp_output_path = webapp_converted_path / output_filename
+                    
+                    # Копируем только если еще не скопировано
+                    if not webapp_output_path.exists():
+                        shutil.copy2(output_path, webapp_output_path)
+                        logger.info(f"✅ Видео скопировано в веб-папку: {webapp_output_path}")
+                    else:
+                        logger.info(f"✅ Видео уже есть в веб-папке: {webapp_output_path}")
+                    
+                    # Формируем публичный URL для сконвертированного видео
+                    public_base_url = os.getenv('PUBLIC_BASE_URL', 'https://example.com')
+                    converted_url = f"{public_base_url}/converted/{output_filename}"
+                except Exception as copy_error:
+                    logger.warning(f"⚠️ Не удалось скопировать видео в веб-папку: {copy_error}")
             
-            # Получаем бота из application (будет установлена в main)
-            app = globals().get('application')
-            if not app:
-                logger.error("❌ Application не доступна для отправки результата")
-                await safe_edit_text(status_message, "❌ Ошибка: не удалось отправить результат", reply_markup=get_main_menu_keyboard())
-                return
-            
-            try:
-                with open(output_path, 'rb') as video_file:
-                    await app.bot.send_video(
-                        chat_id=chat_id,
-                        video=video_file,
-                        caption="✅ Видео сконвертировано в MP4 1920x1080"
-                    )
-                logger.info("✅ Видео успешно отправлено пользователю")
+            # Отправляем сообщение со ссылкой
+            if converted_url:
+                await safe_edit_text(status_message,
+                    f"✅ **Видео успешно сконвертировано!**\n\n"
+                    f"📁 Файл: `{os.path.basename(output_path)}`\n"
+                    f"📊 Размер: {output_size / 1024 / 1024:.2f} MB\n"
+                    f"🔗 **Ссылка на сконвертированный файл:**\n{converted_url}",
+                    parse_mode='Markdown',
+                    reply_markup=get_main_menu_keyboard()
+                )
+                logger.info(f"✅ Ссылка на сконвертированное видео отправлена: {converted_url}")
+            else:
+                # Fallback: если не удалось создать ссылку, отправляем файл
+                await safe_edit_text(status_message, "✅ Видео успешно сконвертировано! Отправляю...")
+                logger.info("📤 Начинаю отправку сконвертированного видео")
+                
+                # Получаем бота из application (будет установлена в main)
+                app = globals().get('application')
+                if not app:
+                    logger.error("❌ Application не доступна для отправки результата")
+                    await safe_edit_text(status_message, "❌ Ошибка: не удалось отправить результат", reply_markup=get_main_menu_keyboard())
+                    return
+                
+                try:
+                    with open(output_path, 'rb') as video_file:
+                        await app.bot.send_video(
+                            chat_id=chat_id,
+                            video=video_file,
+                            caption="✅ Видео сконвертировано в MP4 1920x1080"
+                        )
+                    logger.info("✅ Видео успешно отправлено пользователю")
             except Exception as send_error:
                 error_msg = str(send_error).lower()
                 logger.error(f"❌ Ошибка при отправке видео: {send_error}")
