@@ -2045,12 +2045,79 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 file_path = f"downloads/{document.file_id}{file_ext}"
                 logger.info(f"💾 Сохраняю файл в: {file_path}")
-                await file.download_to_drive(file_path)
+                
+                # Пробуем несколько методов скачивания для совместимости
+                download_success = False
+                
+                # Метод 1: прямое скачивание через HTTP (самый надежный при использовании прокси/локального API)
+                if hasattr(file, 'file_path') and file.file_path:
+                    try:
+                        logger.info(f"📂 Пробую скачать напрямую через file_path: {file.file_path}")
+                        import httpx
+                        bot_token = context.bot.token
+                        # Формируем URL для скачивания
+                        if TELEGRAM_LOCAL_API_URL:
+                            # Используем локальный Bot API
+                            base_url = TELEGRAM_LOCAL_API_URL.rstrip('/')
+                            if not base_url.endswith('/bot'):
+                                base_url = f"{base_url}/bot"
+                            download_url = f"{base_url}{bot_token}/{file.file_path}"
+                        else:
+                            # Используем стандартный Telegram API
+                            download_url = f"https://api.telegram.org/file/bot{bot_token}/{file.file_path}"
+                        
+                        logger.info(f"🌐 Скачиваю через прямой URL: {download_url[:100]}...")
+                        async with httpx.AsyncClient(timeout=60.0) as client:
+                            response = await client.get(download_url)
+                            response.raise_for_status()
+                            with open(file_path, 'wb') as f:
+                                f.write(response.content)
+                        file_size = os.path.getsize(file_path)
+                        if file_size > 0:
+                            logger.info(f"✅ Файл скачан через прямой HTTP: {file_path}, размер: {file_size} байт")
+                            download_success = True
+                    except Exception as http_error:
+                        logger.warning(f"⚠️ Прямое HTTP скачивание не сработало: {http_error}")
+                
+                # Метод 2: используем download() для получения байтов (если HTTP не сработал)
+                if not download_success:
+                    try:
+                        logger.info(f"📥 Пробую скачать через download()...")
+                        file_bytes = await file.download()
+                        with open(file_path, 'wb') as f:
+                            f.write(file_bytes)
+                        file_size = len(file_bytes)
+                        if file_size > 0:
+                            logger.info(f"✅ Файл скачан через download(): {file_path}, размер: {file_size} байт")
+                            download_success = True
+                    except Exception as download_error:
+                        logger.warning(f"⚠️ download() не сработал: {download_error}")
+                
+                # Метод 3: fallback на download_to_drive() (последняя попытка)
+                if not download_success:
+                    try:
+                        logger.info(f"📥 Пробую скачать через download_to_drive()...")
+                        await file.download_to_drive(file_path)
+                        if os.path.exists(file_path):
+                            file_size = os.path.getsize(file_path)
+                            if file_size > 0:
+                                logger.info(f"✅ Файл скачан через download_to_drive(): {file_path}, размер: {file_size} байт")
+                                download_success = True
+                    except Exception as download_drive_error:
+                        logger.error(f"❌ download_to_drive() также не сработал: {download_drive_error}")
+                        raise Exception(f"Не удалось скачать файл ни одним из методов. Последняя ошибка: {download_drive_error}")
+                
+                if not download_success:
+                    raise Exception("Не удалось скачать файл ни одним из доступных методов")
                 
                 if not os.path.exists(file_path):
                     raise Exception(f"Файл не был скачан: {file_path}")
                 
-                logger.info(f"✅ Файл успешно скачан: {file_path}, размер: {os.path.getsize(file_path)} байт")
+                file_size = os.path.getsize(file_path)
+                if file_size == 0:
+                    raise Exception(f"Скачанный файл пуст: {file_path}")
+                
+                logger.info(f"✅ Файл успешно скачан: {file_path}, размер: {file_size} байт")
             except Exception as download_error:
                 error_msg = str(download_error)
                 logger.error(f"❌ Ошибка при скачивании файла: {error_msg}", exc_info=True)
