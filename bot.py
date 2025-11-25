@@ -2059,96 +2059,59 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 file_path = f"downloads/{document.file_id}{file_ext}"
                 logger.info(f"💾 Сохраняю файл в: {file_path}")
                 
-                # Используем стандартный метод библиотеки для скачивания
-                # Библиотека сама сформирует правильный URL к локальному Bot API (если настроен)
-                # или к официальному API (если локальный не настроен)
+                # Скачиваем файл напрямую через официальный Telegram API
+                # Это более надежно, так как локальный Bot API может не иметь файл, если он еще не был скачан
                 download_success = False
                 
-                # Метод 1: пробуем стандартные методы библиотеки
-                try:
-                    logger.info(f"⬇️ Начинаю скачивание через download_to_drive()...")
-                    await file.download_to_drive(file_path)
-                    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                        logger.info(f"✅ download_to_drive() успешно завершен")
-                        download_success = True
-                except Exception as download_error:
-                    error_msg = str(download_error)
-                    logger.warning(f"⚠️ download_to_drive() не сработал: {error_msg}")
-                    
-                    # Метод 2: пробуем download_as_bytearray()
+                # Метод 1: Скачиваем напрямую через официальный Telegram API (самый надежный)
+                if hasattr(file, 'file_path') and file.file_path and file.file_path.startswith('http'):
                     try:
-                        logger.info(f"⬇️ Пробую скачать через download_as_bytearray()...")
-                        file_bytes = await file.download_as_bytearray()
-                        with open(file_path, 'wb') as f:
-                            f.write(file_bytes)
-                        if len(file_bytes) > 0:
-                            logger.info(f"✅ download_as_bytearray() успешно завершен, размер: {len(file_bytes)} байт")
-                            download_success = True
-                    except Exception as bytearray_error:
-                        error_msg_bytearray = str(bytearray_error)
-                        logger.warning(f"⚠️ download_as_bytearray() также не сработал: {error_msg_bytearray}")
-                
-                # Метод 3: если используется локальный Bot API и стандартные методы не сработали,
-                # пробуем прямое HTTP скачивание через локальный API
-                if not download_success and TELEGRAM_LOCAL_API_URL and hasattr(file, 'file_path') and file.file_path:
-                    try:
-                        logger.info(f"⬇️ Пробую прямое HTTP скачивание через локальный Bot API...")
-                        file_path_value = file.file_path
+                        logger.info(f"⬇️ Скачиваю файл напрямую через официальный Telegram API...")
+                        official_url = file.file_path
+                        logger.info(f"🌐 URL: {official_url[:100]}...")
                         
-                        # Извлекаем относительный путь из полного URL
-                        # Например: https://api.telegram.org/file/botTOKEN/documents/file_2.txt -> documents/file_2.txt
-                        if '/file/bot' in file_path_value:
-                            relative_path = file_path_value.split('/file/bot', 1)[1]
-                            # Убираем токен из пути (формат: TOKEN/path -> path)
-                            if '/' in relative_path:
-                                relative_path = relative_path.split('/', 1)[1]
-                        else:
-                            relative_path = file_path_value
-                        
-                        # Формируем URL для локального Bot API
-                        local_base = TELEGRAM_LOCAL_API_URL.rstrip('/')
-                        bot_token = context.bot.token
-                        download_url = f"{local_base}/file/bot{bot_token}/{relative_path}"
-                        
-                        logger.info(f"🌐 Скачиваю через локальный Bot API: {download_url[:100]}...")
-                        
-                        # Скачиваем через httpx
                         async with httpx.AsyncClient(timeout=60.0) as client:
-                            response = await client.get(download_url)
+                            response = await client.get(official_url)
                             response.raise_for_status()
                             with open(file_path, 'wb') as f:
                                 f.write(response.content)
                         
                         if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                            logger.info(f"✅ Файл успешно скачан через прямое HTTP: {file_path}, размер: {os.path.getsize(file_path)} байт")
+                            file_size = os.path.getsize(file_path)
+                            logger.info(f"✅ Файл успешно скачан через официальный API: {file_path}, размер: {file_size} байт")
                             download_success = True
-                    except Exception as http_error:
-                        logger.warning(f"⚠️ Прямое HTTP скачивание через локальный API не сработало: {http_error}")
+                    except Exception as official_error:
+                        logger.warning(f"⚠️ Скачивание через официальный API не сработало: {official_error}")
+                
+                # Метод 2: Fallback - пробуем стандартные методы библиотеки (через локальный API, если настроен)
+                if not download_success:
+                    try:
+                        logger.info(f"⬇️ Пробую скачать через download_to_drive()...")
+                        await file.download_to_drive(file_path)
+                        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                            logger.info(f"✅ download_to_drive() успешно завершен")
+                            download_success = True
+                    except Exception as download_error:
+                        error_msg = str(download_error)
+                        logger.warning(f"⚠️ download_to_drive() не сработал: {error_msg}")
                         
-                        # Метод 4: Fallback - скачиваем напрямую через официальный Telegram API
-                        # если локальный API не смог найти файл
-                        if hasattr(file, 'file_path') and file.file_path and file.file_path.startswith('http'):
-                            try:
-                                logger.info(f"⬇️ Пробую скачать напрямую через официальный Telegram API...")
-                                official_url = file.file_path
-                                logger.info(f"🌐 Скачиваю через официальный API: {official_url[:100]}...")
-                                
-                                async with httpx.AsyncClient(timeout=60.0) as client:
-                                    response = await client.get(official_url)
-                                    response.raise_for_status()
-                                    with open(file_path, 'wb') as f:
-                                        f.write(response.content)
-                                
-                                if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                                    logger.info(f"✅ Файл успешно скачан через официальный API: {file_path}, размер: {os.path.getsize(file_path)} байт")
-                                    download_success = True
-                            except Exception as official_error:
-                                logger.warning(f"⚠️ Скачивание через официальный API также не сработало: {official_error}")
+                        # Метод 3: пробуем download_as_bytearray()
+                        try:
+                            logger.info(f"⬇️ Пробую скачать через download_as_bytearray()...")
+                            file_bytes = await file.download_as_bytearray()
+                            with open(file_path, 'wb') as f:
+                                f.write(file_bytes)
+                            if len(file_bytes) > 0:
+                                logger.info(f"✅ download_as_bytearray() успешно завершен, размер: {len(file_bytes)} байт")
+                                download_success = True
+                        except Exception as bytearray_error:
+                            error_msg_bytearray = str(bytearray_error)
+                            logger.warning(f"⚠️ download_as_bytearray() также не сработал: {error_msg_bytearray}")
                 
                 if not download_success:
                     raise Exception(
                         f"Не удалось скачать файл ни одним из методов. "
-                        f"Попробуйте отправить файл еще раз или проверьте настройки локального Bot API."
+                        f"Попробуйте отправить файл еще раз."
                     )
                 
                 if not os.path.exists(file_path):
