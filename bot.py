@@ -2049,9 +2049,37 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.info(f"📁 file_id={file.file_id}, file_size={file.file_size if hasattr(file, 'file_size') else 'N/A'}")
                 
                 # Скачиваем файл как bytearray через стандартный метод библиотеки
-                logger.info(f"⬇️ Скачиваю файл через download_as_bytearray()...")
-                data = await file.download_as_bytearray()
-                logger.info(f"✅ Файл скачан, размер: {len(data)} байт")
+                data = None
+                try:
+                    logger.info(f"⬇️ Скачиваю файл через download_as_bytearray()...")
+                    data = await file.download_as_bytearray()
+                    logger.info(f"✅ Файл скачан через download_as_bytearray(), размер: {len(data)} байт")
+                except Exception as download_error:
+                    error_msg = str(download_error)
+                    logger.warning(f"⚠️ download_as_bytearray() не сработал: {error_msg}")
+                    
+                    # Fallback: если используется локальный Bot API и он не может найти файл,
+                    # пробуем скачать напрямую через официальный Telegram API
+                    if TELEGRAM_LOCAL_API_URL and hasattr(file, 'file_path') and file.file_path and file.file_path.startswith('http'):
+                        try:
+                            logger.info(f"⬇️ Пробую скачать напрямую через официальный Telegram API...")
+                            official_url = file.file_path
+                            logger.info(f"🌐 URL: {official_url[:100]}...")
+                            
+                            async with httpx.AsyncClient(timeout=60.0) as client:
+                                response = await client.get(official_url)
+                                response.raise_for_status()
+                                data = bytearray(response.content)
+                            
+                            logger.info(f"✅ Файл скачан через официальный API, размер: {len(data)} байт")
+                        except Exception as official_error:
+                            logger.error(f"❌ Скачивание через официальный API также не сработало: {official_error}")
+                            raise Exception(f"Не удалось скачать файл. Ошибка: {error_msg}")
+                    else:
+                        raise
+                
+                if not data or len(data) == 0:
+                    raise Exception("Скачанный файл пуст")
                 
                 # Декодируем как текст
                 try:
