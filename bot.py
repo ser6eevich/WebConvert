@@ -2004,6 +2004,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
+        # Определяем расширение файла (если еще не определено)
+        if 'file_ext' not in locals():
+            file_ext = Path(file_name).suffix.lower() if file_name else ""
+        
         # Проверяем, является ли это текстовым файлом
         text_extensions = ['.txt', '.doc', '.docx', '.md']
         if file_ext in text_extensions:
@@ -2024,10 +2028,39 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Это текстовый файл - обрабатываем для генерации поста
             status_message = await update.message.reply_text("⏳ Читаю файл и генерирую текст для поста...")
             
+            # Проверяем наличие file_id
+            if not document.file_id:
+                await safe_edit_text(status_message, "❌ Ошибка: не удалось получить ID файла", reply_markup=get_main_menu_keyboard())
+                return
+            
             # Скачиваем файл
-            file = await context.bot.get_file(document.file_id)
-            file_path = f"downloads/{document.file_id}{file_ext}"
-            await file.download_to_drive(file_path)
+            try:
+                logger.info(f"📥 Скачиваю файл: file_id={document.file_id}, file_name={file_name}")
+                file = await context.bot.get_file(document.file_id)
+                if not file:
+                    raise Exception("Не удалось получить информацию о файле")
+                
+                # Создаем папку downloads если её нет
+                os.makedirs("downloads", exist_ok=True)
+                
+                file_path = f"downloads/{document.file_id}{file_ext}"
+                logger.info(f"💾 Сохраняю файл в: {file_path}")
+                await file.download_to_drive(file_path)
+                
+                if not os.path.exists(file_path):
+                    raise Exception(f"Файл не был скачан: {file_path}")
+                
+                logger.info(f"✅ Файл успешно скачан: {file_path}, размер: {os.path.getsize(file_path)} байт")
+            except Exception as download_error:
+                error_msg = str(download_error)
+                logger.error(f"❌ Ошибка при скачивании файла: {error_msg}", exc_info=True)
+                await safe_edit_text(status_message, 
+                    f"❌ Не удалось скачать файл.\n\n"
+                    f"Ошибка: {error_msg}\n\n"
+                    f"Попробуйте отправить файл еще раз.",
+                    reply_markup=get_main_menu_keyboard()
+                )
+                return
             
             # Читаем текст из файла
             try:
