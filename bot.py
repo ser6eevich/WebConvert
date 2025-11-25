@@ -2056,14 +2056,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         import httpx
                         bot_token = context.bot.token
                         
-                        # Проверяем, является ли file_path полным URL или относительным путем
+                        # Определяем, является ли file_path полным URL или относительным путем
                         file_path_value = file.file_path
                         if file_path_value.startswith('http://') or file_path_value.startswith('https://'):
-                            # file_path уже содержит полный URL - используем его напрямую
+                            # Это уже полный URL - используем его напрямую
                             download_url = file_path_value
-                            logger.info(f"🌐 file_path уже содержит полный URL, использую напрямую")
+                            logger.info(f"🌐 file_path является полным URL, использую напрямую: {download_url[:100]}...")
                         else:
-                            # file_path - относительный путь, формируем URL
+                            # Это относительный путь - формируем правильный URL
                             if TELEGRAM_LOCAL_API_URL:
                                 # Используем локальный Bot API
                                 base_url = TELEGRAM_LOCAL_API_URL.rstrip('/')
@@ -2073,9 +2073,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             else:
                                 # Используем стандартный Telegram API
                                 download_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path_value}"
+                            logger.info(f"🌐 Сформирован URL для скачивания: {download_url[:100]}...")
                         
-                        logger.info(f"🌐 Скачиваю через прямой URL: {download_url[:150]}...")
-                        async with httpx.AsyncClient(timeout=60.0) as client:
+                        # Настраиваем прокси, если указан
+                        proxy_url = os.getenv('TELEGRAM_PROXY_URL')
+                        client_kwargs = {'timeout': 60.0}
+                        if proxy_url:
+                            client_kwargs['proxies'] = {'http://': proxy_url, 'https://': proxy_url}
+                            logger.info(f"🔗 Использую прокси: {proxy_url}")
+                        
+                        async with httpx.AsyncClient(**client_kwargs) as client:
                             response = await client.get(download_url)
                             response.raise_for_status()
                             with open(file_path, 'wb') as f:
@@ -2084,12 +2091,24 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if file_size > 0:
                             logger.info(f"✅ Файл скачан через прямой HTTP: {file_path}, размер: {file_size} байт")
                             download_success = True
-                        else:
-                            raise Exception("Скачанный файл пуст")
                     except Exception as http_error:
                         logger.warning(f"⚠️ Прямое HTTP скачивание не сработало: {http_error}")
                 
-                # Метод 2: fallback на download_to_drive() (последняя попытка)
+                # Метод 2: используем download_as_bytearray() для получения байтов (если HTTP не сработал)
+                if not download_success:
+                    try:
+                        logger.info(f"📥 Пробую скачать через download_as_bytearray()...")
+                        file_bytes = await file.download_as_bytearray()
+                        with open(file_path, 'wb') as f:
+                            f.write(file_bytes)
+                        file_size = len(file_bytes)
+                        if file_size > 0:
+                            logger.info(f"✅ Файл скачан через download_as_bytearray(): {file_path}, размер: {file_size} байт")
+                            download_success = True
+                    except Exception as download_error:
+                        logger.warning(f"⚠️ download_as_bytearray() не сработал: {download_error}")
+                
+                # Метод 3: fallback на download_to_drive() (последняя попытка)
                 if not download_success:
                     try:
                         logger.info(f"📥 Пробую скачать через download_to_drive()...")
@@ -2101,10 +2120,28 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 download_success = True
                     except Exception as download_drive_error:
                         logger.error(f"❌ download_to_drive() также не сработал: {download_drive_error}")
-                        raise Exception(f"Не удалось скачать файл ни одним из методов. Последняя ошибка: {download_drive_error}")
+                        # Не пробрасываем ошибку сразу, пробуем еще один метод
+                
+                # Метод 4: используем bot.request напрямую для скачивания
+                if not download_success:
+                    try:
+                        logger.info(f"📥 Пробую скачать через bot.request напрямую...")
+                        # Получаем file_path из объекта file
+                        file_path_value = file.file_path if hasattr(file, 'file_path') and file.file_path else None
+                        if file_path_value:
+                            # Используем метод retrieve для получения файла
+                            file_data = await context.bot.request.retrieve(file_path_value)
+                            with open(file_path, 'wb') as f:
+                                f.write(file_data)
+                            file_size = os.path.getsize(file_path)
+                            if file_size > 0:
+                                logger.info(f"✅ Файл скачан через bot.request: {file_path}, размер: {file_size} байт")
+                                download_success = True
+                    except Exception as request_error:
+                        logger.error(f"❌ bot.request также не сработал: {request_error}")
                 
                 if not download_success:
-                    raise Exception("Не удалось скачать файл ни одним из доступных методов")
+                    raise Exception("Не удалось скачать файл ни одним из доступных методов. Проверьте настройки прокси и локального Bot API.")
                 
                 if not os.path.exists(file_path):
                     raise Exception(f"Файл не был скачан: {file_path}")
