@@ -2033,10 +2033,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await safe_edit_text(status_message, "❌ Ошибка: не удалось получить ID файла", reply_markup=get_main_menu_keyboard())
                 return
             
-            # Скачиваем файл
+                # Скачиваем файл
             try:
                 logger.info(f"📥 Скачиваю файл: file_id={document.file_id}, file_name={file_name}")
-                file = await context.bot.get_file(document.file_id)
+                
+                # Получаем объект File через стандартный метод библиотеки
+                # Библиотека сама использует правильный base_url из Application
+                file = await document.get_file()
                 if not file:
                     raise Exception("Не удалось получить информацию о файле")
                 
@@ -2046,116 +2049,21 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 file_path = f"downloads/{document.file_id}{file_ext}"
                 logger.info(f"💾 Сохраняю файл в: {file_path}")
                 
-                # Пробуем несколько методов скачивания для совместимости
-                download_success = False
-                
-                # Метод 1: прямое скачивание через HTTP (самый надежный при использовании прокси/локального API)
-                if hasattr(file, 'file_path') and file.file_path:
+                # Используем стандартный метод библиотеки для скачивания
+                # Библиотека сама сформирует правильный URL к локальному Bot API (если настроен)
+                # или к официальному API (если локальный не настроен)
+                try:
+                    await file.download_to_drive(file_path)
+                except Exception as download_error:
+                    # Fallback: пробуем download_as_bytearray()
+                    logger.warning(f"⚠️ download_to_drive() не сработал: {download_error}, пробую download_as_bytearray()")
                     try:
-                        logger.info(f"📂 Пробую скачать напрямую через file_path: {file.file_path}")
-                        import httpx
-                        bot_token = context.bot.token
-                        
-                        # Определяем, является ли file_path полным URL или относительным путем
-                        file_path_value = file.file_path
-                        if file_path_value.startswith('http://') or file_path_value.startswith('https://'):
-                            # Это уже полный URL - заменяем базовый URL на локальный, если используется локальный Bot API
-                            if TELEGRAM_LOCAL_API_URL:
-                                # Заменяем стандартный Telegram API URL на локальный
-                                local_base = TELEGRAM_LOCAL_API_URL.rstrip('/')
-                                # Извлекаем путь после /file/bot... из оригинального URL
-                                # Например: https://api.telegram.org/file/botTOKEN/path -> /file/botTOKEN/path
-                                if '/file/bot' in file_path_value:
-                                    path_after_file = file_path_value.split('/file/bot', 1)[1]
-                                    download_url = f"{local_base}/file/bot{path_after_file}"
-                                else:
-                                    # Если структура URL другая, просто заменяем домен
-                                    download_url = file_path_value.replace('https://api.telegram.org', local_base).replace('http://api.telegram.org', local_base)
-                                logger.info(f"🌐 Заменен базовый URL на локальный Bot API: {download_url[:100]}...")
-                            else:
-                                # Используем URL напрямую, если локальный API не настроен
-                                download_url = file_path_value
-                                logger.info(f"🌐 file_path является полным URL, использую напрямую: {download_url[:100]}...")
-                        else:
-                            # Это относительный путь - формируем правильный URL
-                            if TELEGRAM_LOCAL_API_URL:
-                                # Используем локальный Bot API
-                                base_url = TELEGRAM_LOCAL_API_URL.rstrip('/')
-                                if not base_url.endswith('/bot'):
-                                    base_url = f"{base_url}/bot"
-                                download_url = f"{base_url}{bot_token}/{file_path_value}"
-                            else:
-                                # Используем стандартный Telegram API
-                                download_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path_value}"
-                            logger.info(f"🌐 Сформирован URL для скачивания: {download_url[:100]}...")
-                        
-                        # Настраиваем прокси, если указан
-                        proxy_url = os.getenv('TELEGRAM_PROXY_URL')
-                        client_kwargs = {'timeout': 60.0}
-                        if proxy_url:
-                            client_kwargs['proxies'] = {'http://': proxy_url, 'https://': proxy_url}
-                            logger.info(f"🔗 Использую прокси: {proxy_url}")
-                        
-                        async with httpx.AsyncClient(**client_kwargs) as client:
-                            response = await client.get(download_url)
-                            response.raise_for_status()
-                            with open(file_path, 'wb') as f:
-                                f.write(response.content)
-                        file_size = os.path.getsize(file_path)
-                        if file_size > 0:
-                            logger.info(f"✅ Файл скачан через прямой HTTP: {file_path}, размер: {file_size} байт")
-                            download_success = True
-                    except Exception as http_error:
-                        logger.warning(f"⚠️ Прямое HTTP скачивание не сработало: {http_error}")
-                
-                # Метод 2: используем download_as_bytearray() для получения байтов (если HTTP не сработал)
-                if not download_success:
-                    try:
-                        logger.info(f"📥 Пробую скачать через download_as_bytearray()...")
                         file_bytes = await file.download_as_bytearray()
                         with open(file_path, 'wb') as f:
                             f.write(file_bytes)
-                        file_size = len(file_bytes)
-                        if file_size > 0:
-                            logger.info(f"✅ Файл скачан через download_as_bytearray(): {file_path}, размер: {file_size} байт")
-                            download_success = True
-                    except Exception as download_error:
-                        logger.warning(f"⚠️ download_as_bytearray() не сработал: {download_error}")
-                
-                # Метод 3: fallback на download_to_drive() (последняя попытка)
-                if not download_success:
-                    try:
-                        logger.info(f"📥 Пробую скачать через download_to_drive()...")
-                        await file.download_to_drive(file_path)
-                        if os.path.exists(file_path):
-                            file_size = os.path.getsize(file_path)
-                            if file_size > 0:
-                                logger.info(f"✅ Файл скачан через download_to_drive(): {file_path}, размер: {file_size} байт")
-                                download_success = True
-                    except Exception as download_drive_error:
-                        logger.error(f"❌ download_to_drive() также не сработал: {download_drive_error}")
-                        # Не пробрасываем ошибку сразу, пробуем еще один метод
-                
-                # Метод 4: используем bot.request напрямую для скачивания
-                if not download_success:
-                    try:
-                        logger.info(f"📥 Пробую скачать через bot.request напрямую...")
-                        # Получаем file_path из объекта file
-                        file_path_value = file.file_path if hasattr(file, 'file_path') and file.file_path else None
-                        if file_path_value:
-                            # Используем метод retrieve для получения файла
-                            file_data = await context.bot.request.retrieve(file_path_value)
-                            with open(file_path, 'wb') as f:
-                                f.write(file_data)
-                            file_size = os.path.getsize(file_path)
-                            if file_size > 0:
-                                logger.info(f"✅ Файл скачан через bot.request: {file_path}, размер: {file_size} байт")
-                                download_success = True
-                    except Exception as request_error:
-                        logger.error(f"❌ bot.request также не сработал: {request_error}")
-                
-                if not download_success:
-                    raise Exception("Не удалось скачать файл ни одним из доступных методов. Проверьте настройки прокси и локального Bot API.")
+                    except Exception as bytearray_error:
+                        logger.error(f"❌ download_as_bytearray() также не сработал: {bytearray_error}")
+                        raise Exception(f"Не удалось скачать файл. Ошибка: {bytearray_error}")
                 
                 if not os.path.exists(file_path):
                     raise Exception(f"Файл не был скачан: {file_path}")
