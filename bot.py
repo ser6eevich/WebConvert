@@ -2036,7 +2036,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await safe_edit_text(status_message, "❌ Ошибка: не удалось получить ID файла", reply_markup=get_main_menu_keyboard())
                 return
             
-                # Скачиваем файл используя только стандартные методы библиотеки
+                # Скачиваем файл через стандартные методы библиотеки
             try:
                 logger.info(f"📥 Получен документ: имя={file_name}, MIME={mime_type}")
                 
@@ -2046,148 +2046,55 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not file:
                     raise Exception("Не удалось получить информацию о файле")
                 
-                logger.info(f"📁 file_id={file.file_id}, file_size={file.file_size if hasattr(file, 'file_size') else 'N/A'}")
-                
-                # Логируем file_path для диагностики
-                file_path_value = None
-                if hasattr(file, 'file_path') and file.file_path:
-                    file_path_value = file.file_path
-                    logger.info(f"📂 file.file_path: {file_path_value}")
+                logger.info(f"📁 file_id={file.file_id}")
                 
                 # Скачиваем файл как bytearray через стандартный метод библиотеки
-                data = None
-                try:
-                    logger.info(f"⬇️ Скачиваю файл через download_as_bytearray()...")
-                    data = await file.download_as_bytearray()
-                    logger.info(f"✅ Файл скачан через download_as_bytearray(), размер: {len(data)} байт")
-                except Exception as download_error:
-                    error_msg = str(download_error)
-                    logger.warning(f"⚠️ download_as_bytearray() не сработал: {error_msg}")
-                    
-                    # Fallback: пробуем скачать напрямую через HTTP
-                    if file_path_value:
-                        # Если используется локальный Bot API, пробуем через него
-                        if TELEGRAM_LOCAL_API_URL:
-                            try:
-                                logger.info(f"⬇️ Пробую скачать через локальный Bot API...")
-                                
-                                # Извлекаем относительный путь из file_path
-                                # file_path может быть: "documents/file_2.txt" или "https://api.telegram.org/file/bot.../documents/file_2.txt"
-                                relative_path = file_path_value
-                                if '://' in relative_path:
-                                    # Если это полный URL, извлекаем путь после /file/bot{TOKEN}/
-                                    if '/file/bot' in relative_path:
-                                        parts = relative_path.split('/file/bot', 1)
-                                        if len(parts) > 1:
-                                            # Убираем токен и оставляем только путь
-                                            path_with_token = parts[1]
-                                            if '/' in path_with_token:
-                                                relative_path = path_with_token.split('/', 1)[1]
-                                
-                                # Формируем URL для локального Bot API
-                                local_base = TELEGRAM_LOCAL_API_URL.rstrip('/')
-                                bot_token = context.bot.token
-                                download_url = f"{local_base}/file/bot{bot_token}/{relative_path}"
-                                
-                                logger.info(f"🌐 Скачиваю через локальный Bot API: {download_url[:100]}...")
-                                
-                                async with httpx.AsyncClient(timeout=60.0) as client:
-                                    response = await client.get(download_url)
-                                    response.raise_for_status()
-                                    data = bytearray(response.content)
-                                
-                                logger.info(f"✅ Файл скачан через локальный Bot API, размер: {len(data)} байт")
-                            except Exception as local_error:
-                                logger.warning(f"⚠️ Скачивание через локальный Bot API не сработало: {local_error}")
-                                
-                                # Если локальный не сработал, пробуем официальный API
-                                if file_path_value.startswith('http'):
-                                    try:
-                                        logger.info(f"⬇️ Пробую скачать напрямую через официальный Telegram API...")
-                                        official_url = file_path_value
-                                        logger.info(f"🌐 URL: {official_url[:100]}...")
-                                        
-                                        async with httpx.AsyncClient(timeout=60.0) as client:
-                                            response = await client.get(official_url)
-                                            response.raise_for_status()
-                                            data = bytearray(response.content)
-                                        
-                                        logger.info(f"✅ Файл скачан через официальный API, размер: {len(data)} байт")
-                                    except Exception as official_error:
-                                        logger.error(f"❌ Скачивание через официальный API также не сработало: {official_error}")
-                                        raise Exception(f"Не удалось скачать файл. Ошибка: {error_msg}")
-                                else:
-                                    raise
-                        else:
-                            # Если не используется локальный API, пробуем официальный
-                            if file_path_value and file_path_value.startswith('http'):
-                                try:
-                                    logger.info(f"⬇️ Пробую скачать напрямую через официальный Telegram API...")
-                                    official_url = file_path_value
-                                    logger.info(f"🌐 URL: {official_url[:100]}...")
-                                    
-                                    async with httpx.AsyncClient(timeout=60.0) as client:
-                                        response = await client.get(official_url)
-                                        response.raise_for_status()
-                                        data = bytearray(response.content)
-                                    
-                                    logger.info(f"✅ Файл скачан через официальный API, размер: {len(data)} байт")
-                                except Exception as official_error:
-                                    logger.error(f"❌ Скачивание через официальный API также не сработало: {official_error}")
-                                    raise Exception(f"Не удалось скачать файл. Ошибка: {error_msg}")
-                            else:
-                                raise
-                    else:
-                        raise
+                logger.info(f"⬇️ Скачиваю файл через download_as_bytearray()...")
+                data = await file.download_as_bytearray()
+                logger.info(f"✅ Файл скачан, размер: {len(data)} байт")
                 
                 if not data or len(data) == 0:
                     raise Exception("Скачанный файл пуст")
                 
-                # Декодируем как текст
+                # Сохраняем файл в WEBAPP_TEXTS_DIR
+                texts_dir = Path(WEBAPP_TEXTS_DIR)
+                texts_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Используем оригинальное имя файла, если доступно
+                if file_name:
+                    safe_filename = "".join(c for c in file_name if c.isalnum() or c in (' ', '-', '_', '.')).strip()
+                    if not safe_filename:
+                        safe_filename = f"{document.file_id}{file_ext}"
+                else:
+                    safe_filename = f"{document.file_id}{file_ext}"
+                
+                # Если файл с таким именем уже существует, добавляем суффикс
+                texts_file_path = texts_dir / safe_filename
+                counter = 1
+                while texts_file_path.exists():
+                    name_part = texts_file_path.stem
+                    texts_file_path = texts_dir / f"{name_part}_{counter}{texts_file_path.suffix}"
+                    counter += 1
+                
+                # Сохраняем файл
+                with open(texts_file_path, 'wb') as f:
+                    f.write(data)
+                logger.info(f"✅ Текстовый документ сохранен в веб-папку: {texts_file_path}")
+                
+                # Читаем текст из сохраненного файла
                 try:
-                    text = data.decode("utf-8", errors="ignore")
-                except Exception as decode_error:
-                    logger.warning(f"⚠️ Не удалось декодировать как UTF-8: {decode_error}, пробую cp1251")
-                    text = data.decode("cp1251", errors="ignore")
+                    with open(texts_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        text = f.read()
+                except Exception as read_error:
+                    logger.warning(f"⚠️ Не удалось прочитать как UTF-8: {read_error}, пробую cp1251")
+                    with open(texts_file_path, 'r', encoding='cp1251', errors='ignore') as f:
+                        text = f.read()
                 
                 if not text or len(text.strip()) < 10:
                     await safe_edit_text(status_message, "❌ Файл слишком короткий или пустой", reply_markup=get_main_menu_keyboard())
                     return
                 
-                # Сохраняем файл в downloads для копирования в веб-папку
-                os.makedirs("downloads", exist_ok=True)
-                file_path = f"downloads/{document.file_id}{file_ext}"
-                with open(file_path, 'wb') as f:
-                    f.write(data)
-                
-                # Копируем файл в TEXTS_DIR для веб-доступа
-                if WEBAPP_TEXTS_DIR:
-                    try:
-                        texts_dir = Path(WEBAPP_TEXTS_DIR)
-                        texts_dir.mkdir(parents=True, exist_ok=True)
-                        
-                        # Используем оригинальное имя файла, если доступно
-                        if file_name:
-                            safe_filename = "".join(c for c in file_name if c.isalnum() or c in (' ', '-', '_', '.')).strip()
-                            if not safe_filename:
-                                safe_filename = f"{document.file_id}{file_ext}"
-                        else:
-                            safe_filename = f"{document.file_id}{file_ext}"
-                        
-                        # Если файл с таким именем уже существует, добавляем суффикс
-                        texts_file_path = texts_dir / safe_filename
-                        counter = 1
-                        while texts_file_path.exists():
-                            name_part = texts_file_path.stem
-                            texts_file_path = texts_dir / f"{name_part}_{counter}{texts_file_path.suffix}"
-                            counter += 1
-                        
-                        # Копируем файл
-                        import shutil
-                        shutil.copy2(file_path, texts_file_path)
-                        logger.info(f"✅ Текстовый документ скопирован в веб-папку: {texts_file_path}")
-                    except Exception as copy_error:
-                        logger.warning(f"⚠️ Не удалось скопировать документ в веб-папку: {copy_error}")
+                logger.info(f"✅ Текст прочитан из файла, длина: {len(text)} символов")
             
             except Exception as download_error:
                 error_msg = str(download_error)
@@ -2206,13 +2113,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 assistant_id = GPT_ASSISTANT_ID_VIDEOS
                 if not assistant_id:
                     await safe_edit_text(status_message, "❌ GPT_ASSISTANT_ID_VIDEOS не установлен в .env файле", reply_markup=get_main_menu_keyboard())
-                    os.remove(file_path)
                     return
             else:
                 assistant_id = GPT_ASSISTANT_ID
                 if not assistant_id:
                     await safe_edit_text(status_message, "❌ GPT_ASSISTANT_ID не установлен в .env файле", reply_markup=get_main_menu_keyboard())
-                    os.remove(file_path)
                     return
             
             # Генерируем контент через GPT ассистента
@@ -2220,7 +2125,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if not content_parts:
                 await safe_edit_text(status_message, "❌ Не удалось сгенерировать контент. Проверьте настройки ассистента в .env", reply_markup=get_main_menu_keyboard())
-                os.remove(file_path)
                 
                 # Отправляем кнопку меню при ошибке
                 keyboard = [
@@ -2328,9 +2232,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(message, reply_markup=reply_markup)
-                
-            # Удаляем временный файл
-            os.remove(file_path)
+            
+            # Файл остается в webapp/texts/ для веб-доступа
+            logger.info(f"✅ Файл сохранен в веб-приложении: {texts_file_path}")
         else:
             # Это может быть видео - пробуем обработать как видео
             if document.mime_type and 'video' in document.mime_type:
@@ -2588,34 +2492,20 @@ def main():
             
             logger.info(f"Используется локальный Bot API: {base_url}")
             
-            # ВАЖНО: base_url должен заканчиваться на /bot и НЕ содержать токен
-            # Формат: http://host:port/bot
-            # Токен передается отдельно через .token()
-            base_url_with_bot = f"{base_url}/bot"
+            # Формируем полный base_url с токеном для HTTPXRequest
+            # Формат: http://host:port/bot{TOKEN}
+            full_base_url = f"{base_url}/bot{TELEGRAM_BOT_TOKEN}"
             
-            # Финальная проверка: убеждаемся, что base_url не содержит токен
-            if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN in base_url_with_bot:
-                error_msg = (
-                    f"ОШИБКА: Токен бота обнаружен в base_url!\n"
-                    f"base_url: '{base_url}'\n"
-                    f"base_url_with_bot: '{base_url_with_bot}'\n"
-                    f"Проверьте файл .env - возможно, токен попал в TELEGRAM_LOCAL_API_URL."
-                )
-                logger.error(error_msg)
-                raise ValueError(error_msg)
+            logger.info(f"Настраиваю локальный Bot API: {base_url}")
+            logger.info(f"Полный base_url (с токеном): {full_base_url[:50]}...")
             
-            logger.info(f"base_url для Application.builder(): '{base_url_with_bot}'")
-            logger.info(f"Токен передается отдельно через .token() (не в base_url)")
-            
-            # Создаем request (БЕЗ base_url, он передается в builder)
+            # Создаем request с base_url
+            request_kwargs['base_url'] = full_base_url
             request = HTTPXRequest(**request_kwargs)
             
-            # Используем base_url в builder
-            # base_url должен быть: http://host:port/bot (БЕЗ токена!)
-            # Токен передается ТОЛЬКО через .token(), а НЕ в base_url
+            # Создаем Application с кастомным request
             application = Application.builder()\
                 .token(TELEGRAM_BOT_TOKEN)\
-                .base_url(base_url_with_bot)\
                 .request(request)\
                 .build()
         else:
