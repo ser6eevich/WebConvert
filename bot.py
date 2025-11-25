@@ -2062,36 +2062,74 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Используем стандартный метод библиотеки для скачивания
                 # Библиотека сама сформирует правильный URL к локальному Bot API (если настроен)
                 # или к официальному API (если локальный не настроен)
+                download_success = False
+                
+                # Метод 1: пробуем стандартные методы библиотеки
                 try:
                     logger.info(f"⬇️ Начинаю скачивание через download_to_drive()...")
                     await file.download_to_drive(file_path)
-                    logger.info(f"✅ download_to_drive() успешно завершен")
+                    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                        logger.info(f"✅ download_to_drive() успешно завершен")
+                        download_success = True
                 except Exception as download_error:
-                    # Fallback: пробуем download_as_bytearray()
                     error_msg = str(download_error)
-                    logger.warning(f"⚠️ download_to_drive() не сработал: {error_msg}, пробую download_as_bytearray()")
+                    logger.warning(f"⚠️ download_to_drive() не сработал: {error_msg}")
+                    
+                    # Метод 2: пробуем download_as_bytearray()
                     try:
                         logger.info(f"⬇️ Пробую скачать через download_as_bytearray()...")
                         file_bytes = await file.download_as_bytearray()
                         with open(file_path, 'wb') as f:
                             f.write(file_bytes)
-                        logger.info(f"✅ download_as_bytearray() успешно завершен, размер: {len(file_bytes)} байт")
+                        if len(file_bytes) > 0:
+                            logger.info(f"✅ download_as_bytearray() успешно завершен, размер: {len(file_bytes)} байт")
+                            download_success = True
                     except Exception as bytearray_error:
                         error_msg_bytearray = str(bytearray_error)
-                        logger.error(f"❌ download_as_bytearray() также не сработал: {error_msg_bytearray}")
+                        logger.warning(f"⚠️ download_as_bytearray() также не сработал: {error_msg_bytearray}")
+                
+                # Метод 3: если используется локальный Bot API и стандартные методы не сработали,
+                # пробуем прямое HTTP скачивание через локальный API
+                if not download_success and TELEGRAM_LOCAL_API_URL and hasattr(file, 'file_path') and file.file_path:
+                    try:
+                        logger.info(f"⬇️ Пробую прямое HTTP скачивание через локальный Bot API...")
+                        file_path_value = file.file_path
                         
-                        # Если используется локальный Bot API и файл не найден, возможно файл еще не скачан
-                        if TELEGRAM_LOCAL_API_URL and ("Not Found" in error_msg_bytearray or "404" in error_msg_bytearray):
-                            logger.error(f"❌ Локальный Bot API не нашел файл. Возможные причины:")
-                            logger.error(f"   1. Файл еще не скачан локальным сервером")
-                            logger.error(f"   2. Файл слишком старый и уже недоступен")
-                            logger.error(f"   3. Проблема с настройкой локального Bot API")
-                            raise Exception(
-                                f"Локальный Bot API не может найти файл. "
-                                f"Попробуйте отправить файл еще раз или проверьте настройки локального Bot API. "
-                                f"Ошибка: {error_msg_bytearray}"
-                            )
-                        raise Exception(f"Не удалось скачать файл. Ошибка: {error_msg_bytearray}")
+                        # Извлекаем относительный путь из полного URL
+                        # Например: https://api.telegram.org/file/botTOKEN/documents/file_2.txt -> documents/file_2.txt
+                        if '/file/bot' in file_path_value:
+                            relative_path = file_path_value.split('/file/bot', 1)[1]
+                            # Убираем токен из пути (формат: TOKEN/path -> path)
+                            if '/' in relative_path:
+                                relative_path = relative_path.split('/', 1)[1]
+                        else:
+                            relative_path = file_path_value
+                        
+                        # Формируем URL для локального Bot API
+                        local_base = TELEGRAM_LOCAL_API_URL.rstrip('/')
+                        bot_token = context.bot.token
+                        download_url = f"{local_base}/file/bot{bot_token}/{relative_path}"
+                        
+                        logger.info(f"🌐 Скачиваю через локальный Bot API: {download_url[:100]}...")
+                        
+                        # Скачиваем через httpx
+                        async with httpx.AsyncClient(timeout=60.0) as client:
+                            response = await client.get(download_url)
+                            response.raise_for_status()
+                            with open(file_path, 'wb') as f:
+                                f.write(response.content)
+                        
+                        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                            logger.info(f"✅ Файл успешно скачан через прямое HTTP: {file_path}, размер: {os.path.getsize(file_path)} байт")
+                            download_success = True
+                    except Exception as http_error:
+                        logger.warning(f"⚠️ Прямое HTTP скачивание не сработало: {http_error}")
+                
+                if not download_success:
+                    raise Exception(
+                        f"Не удалось скачать файл ни одним из методов. "
+                        f"Попробуйте отправить файл еще раз или проверьте настройки локального Bot API."
+                    )
                 
                 if not os.path.exists(file_path):
                     raise Exception(f"Файл не был скачан: {file_path}")
