@@ -2048,6 +2048,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 logger.info(f"📁 file_id={file.file_id}, file_size={file.file_size if hasattr(file, 'file_size') else 'N/A'}")
                 
+                # Логируем file_path для диагностики
+                file_path_value = None
+                if hasattr(file, 'file_path') and file.file_path:
+                    file_path_value = file.file_path
+                    logger.info(f"📂 file.file_path: {file_path_value}")
+                
                 # Скачиваем файл как bytearray через стандартный метод библиотеки
                 data = None
                 try:
@@ -2058,23 +2064,79 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     error_msg = str(download_error)
                     logger.warning(f"⚠️ download_as_bytearray() не сработал: {error_msg}")
                     
-                    # Fallback: если используется локальный Bot API и он не может найти файл,
-                    # пробуем скачать напрямую через официальный Telegram API
-                    if TELEGRAM_LOCAL_API_URL and hasattr(file, 'file_path') and file.file_path and file.file_path.startswith('http'):
-                        try:
-                            logger.info(f"⬇️ Пробую скачать напрямую через официальный Telegram API...")
-                            official_url = file.file_path
-                            logger.info(f"🌐 URL: {official_url[:100]}...")
-                            
-                            async with httpx.AsyncClient(timeout=60.0) as client:
-                                response = await client.get(official_url)
-                                response.raise_for_status()
-                                data = bytearray(response.content)
-                            
-                            logger.info(f"✅ Файл скачан через официальный API, размер: {len(data)} байт")
-                        except Exception as official_error:
-                            logger.error(f"❌ Скачивание через официальный API также не сработало: {official_error}")
-                            raise Exception(f"Не удалось скачать файл. Ошибка: {error_msg}")
+                    # Fallback: пробуем скачать напрямую через HTTP
+                    if file_path_value:
+                        # Если используется локальный Bot API, пробуем через него
+                        if TELEGRAM_LOCAL_API_URL:
+                            try:
+                                logger.info(f"⬇️ Пробую скачать через локальный Bot API...")
+                                
+                                # Извлекаем относительный путь из file_path
+                                # file_path может быть: "documents/file_2.txt" или "https://api.telegram.org/file/bot.../documents/file_2.txt"
+                                relative_path = file_path_value
+                                if '://' in relative_path:
+                                    # Если это полный URL, извлекаем путь после /file/bot{TOKEN}/
+                                    if '/file/bot' in relative_path:
+                                        parts = relative_path.split('/file/bot', 1)
+                                        if len(parts) > 1:
+                                            # Убираем токен и оставляем только путь
+                                            path_with_token = parts[1]
+                                            if '/' in path_with_token:
+                                                relative_path = path_with_token.split('/', 1)[1]
+                                
+                                # Формируем URL для локального Bot API
+                                local_base = TELEGRAM_LOCAL_API_URL.rstrip('/')
+                                bot_token = context.bot.token
+                                download_url = f"{local_base}/file/bot{bot_token}/{relative_path}"
+                                
+                                logger.info(f"🌐 Скачиваю через локальный Bot API: {download_url[:100]}...")
+                                
+                                async with httpx.AsyncClient(timeout=60.0) as client:
+                                    response = await client.get(download_url)
+                                    response.raise_for_status()
+                                    data = bytearray(response.content)
+                                
+                                logger.info(f"✅ Файл скачан через локальный Bot API, размер: {len(data)} байт")
+                            except Exception as local_error:
+                                logger.warning(f"⚠️ Скачивание через локальный Bot API не сработало: {local_error}")
+                                
+                                # Если локальный не сработал, пробуем официальный API
+                                if file_path_value.startswith('http'):
+                                    try:
+                                        logger.info(f"⬇️ Пробую скачать напрямую через официальный Telegram API...")
+                                        official_url = file_path_value
+                                        logger.info(f"🌐 URL: {official_url[:100]}...")
+                                        
+                                        async with httpx.AsyncClient(timeout=60.0) as client:
+                                            response = await client.get(official_url)
+                                            response.raise_for_status()
+                                            data = bytearray(response.content)
+                                        
+                                        logger.info(f"✅ Файл скачан через официальный API, размер: {len(data)} байт")
+                                    except Exception as official_error:
+                                        logger.error(f"❌ Скачивание через официальный API также не сработало: {official_error}")
+                                        raise Exception(f"Не удалось скачать файл. Ошибка: {error_msg}")
+                                else:
+                                    raise
+                        else:
+                            # Если не используется локальный API, пробуем официальный
+                            if file_path_value and file_path_value.startswith('http'):
+                                try:
+                                    logger.info(f"⬇️ Пробую скачать напрямую через официальный Telegram API...")
+                                    official_url = file_path_value
+                                    logger.info(f"🌐 URL: {official_url[:100]}...")
+                                    
+                                    async with httpx.AsyncClient(timeout=60.0) as client:
+                                        response = await client.get(official_url)
+                                        response.raise_for_status()
+                                        data = bytearray(response.content)
+                                    
+                                    logger.info(f"✅ Файл скачан через официальный API, размер: {len(data)} байт")
+                                except Exception as official_error:
+                                    logger.error(f"❌ Скачивание через официальный API также не сработало: {official_error}")
+                                    raise Exception(f"Не удалось скачать файл. Ошибка: {error_msg}")
+                            else:
+                                raise
                     else:
                         raise
                 
