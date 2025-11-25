@@ -2123,7 +2123,27 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             logger.info(f"✅ Файл успешно скачан через прямое HTTP: {file_path}, размер: {os.path.getsize(file_path)} байт")
                             download_success = True
                     except Exception as http_error:
-                        logger.warning(f"⚠️ Прямое HTTP скачивание не сработало: {http_error}")
+                        logger.warning(f"⚠️ Прямое HTTP скачивание через локальный API не сработало: {http_error}")
+                        
+                        # Метод 4: Fallback - скачиваем напрямую через официальный Telegram API
+                        # если локальный API не смог найти файл
+                        if hasattr(file, 'file_path') and file.file_path and file.file_path.startswith('http'):
+                            try:
+                                logger.info(f"⬇️ Пробую скачать напрямую через официальный Telegram API...")
+                                official_url = file.file_path
+                                logger.info(f"🌐 Скачиваю через официальный API: {official_url[:100]}...")
+                                
+                                async with httpx.AsyncClient(timeout=60.0) as client:
+                                    response = await client.get(official_url)
+                                    response.raise_for_status()
+                                    with open(file_path, 'wb') as f:
+                                        f.write(response.content)
+                                
+                                if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                                    logger.info(f"✅ Файл успешно скачан через официальный API: {file_path}, размер: {os.path.getsize(file_path)} байт")
+                                    download_success = True
+                            except Exception as official_error:
+                                logger.warning(f"⚠️ Скачивание через официальный API также не сработало: {official_error}")
                 
                 if not download_success:
                     raise Exception(
