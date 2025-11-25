@@ -2492,20 +2492,20 @@ def main():
             
             logger.info(f"Используется локальный Bot API: {base_url}")
             
-            # Формируем base_url с /bot{TOKEN}
-            # Формат: http://host:port/bot{TOKEN}
-            api_base_url = f"{base_url}/bot{TELEGRAM_BOT_TOKEN}"
-            
-            logger.info(f"Настраиваю локальный Bot API")
-            logger.info(f"API base URL: {api_base_url[:50]}...")
-            
             # Создаем request с увеличенными таймаутами
             request = HTTPXRequest(**request_kwargs)
             
-            # Создаем Application с полным base_url
+            # Для локального Bot API используем local_mode и base_url БЕЗ токена
+            # Библиотека сама добавит /bot{TOKEN} к base_url
+            logger.info(f"Настраиваю локальный Bot API с base_url: {base_url}")
+            
+            # base_url: http://host:port (БЕЗ /bot и токена!)
+            # base_file_url: http://host:port (БЕЗ /file/bot и токена!)
             application = Application.builder()\
                 .token(TELEGRAM_BOT_TOKEN)\
-                .base_url(api_base_url)\
+                .base_url(base_url)\
+                .base_file_url(base_url)\
+                .local_mode(True)\
                 .request(request)\
                 .build()
         else:
