@@ -2517,17 +2517,15 @@ def main():
             logger.info(f"base_url для Application.builder(): '{base_url_with_bot}'")
             logger.info(f"Токен передается отдельно через .token() (не в base_url)")
             
-            # Создаем request с base_url
-            # base_url должен быть: http://host:port/bot{TOKEN} (С токеном!)
-            base_url_with_token = f"{base_url_with_bot}{TELEGRAM_BOT_TOKEN}"
-            request = HTTPXRequest(
-                base_url=base_url_with_token,
-                **request_kwargs
-            )
+            # Создаем request (БЕЗ base_url, он передается в builder)
+            request = HTTPXRequest(**request_kwargs)
             
-            # Используем request в builder (base_url уже в request)
+            # Используем base_url в builder
+            # base_url должен быть: http://host:port/bot (БЕЗ токена!)
+            # Токен передается ТОЛЬКО через .token(), а НЕ в base_url
             application = Application.builder()\
                 .token(TELEGRAM_BOT_TOKEN)\
+                .base_url(base_url_with_bot)\
                 .request(request)\
                 .build()
         else:
