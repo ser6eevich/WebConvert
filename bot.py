@@ -2055,18 +2055,26 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         logger.info(f"📂 Пробую скачать напрямую через file_path: {file.file_path}")
                         import httpx
                         bot_token = context.bot.token
-                        # Формируем URL для скачивания
-                        if TELEGRAM_LOCAL_API_URL:
-                            # Используем локальный Bot API
-                            base_url = TELEGRAM_LOCAL_API_URL.rstrip('/')
-                            if not base_url.endswith('/bot'):
-                                base_url = f"{base_url}/bot"
-                            download_url = f"{base_url}{bot_token}/{file.file_path}"
-                        else:
-                            # Используем стандартный Telegram API
-                            download_url = f"https://api.telegram.org/file/bot{bot_token}/{file.file_path}"
                         
-                        logger.info(f"🌐 Скачиваю через прямой URL: {download_url[:100]}...")
+                        # Проверяем, является ли file_path полным URL или относительным путем
+                        file_path_value = file.file_path
+                        if file_path_value.startswith('http://') or file_path_value.startswith('https://'):
+                            # file_path уже содержит полный URL - используем его напрямую
+                            download_url = file_path_value
+                            logger.info(f"🌐 file_path уже содержит полный URL, использую напрямую")
+                        else:
+                            # file_path - относительный путь, формируем URL
+                            if TELEGRAM_LOCAL_API_URL:
+                                # Используем локальный Bot API
+                                base_url = TELEGRAM_LOCAL_API_URL.rstrip('/')
+                                if not base_url.endswith('/bot'):
+                                    base_url = f"{base_url}/bot"
+                                download_url = f"{base_url}{bot_token}/{file_path_value}"
+                            else:
+                                # Используем стандартный Telegram API
+                                download_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path_value}"
+                        
+                        logger.info(f"🌐 Скачиваю через прямой URL: {download_url[:150]}...")
                         async with httpx.AsyncClient(timeout=60.0) as client:
                             response = await client.get(download_url)
                             response.raise_for_status()
@@ -2076,24 +2084,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if file_size > 0:
                             logger.info(f"✅ Файл скачан через прямой HTTP: {file_path}, размер: {file_size} байт")
                             download_success = True
+                        else:
+                            raise Exception("Скачанный файл пуст")
                     except Exception as http_error:
                         logger.warning(f"⚠️ Прямое HTTP скачивание не сработало: {http_error}")
                 
-                # Метод 2: используем download() для получения байтов (если HTTP не сработал)
-                if not download_success:
-                    try:
-                        logger.info(f"📥 Пробую скачать через download()...")
-                        file_bytes = await file.download()
-                        with open(file_path, 'wb') as f:
-                            f.write(file_bytes)
-                        file_size = len(file_bytes)
-                        if file_size > 0:
-                            logger.info(f"✅ Файл скачан через download(): {file_path}, размер: {file_size} байт")
-                            download_success = True
-                    except Exception as download_error:
-                        logger.warning(f"⚠️ download() не сработал: {download_error}")
-                
-                # Метод 3: fallback на download_to_drive() (последняя попытка)
+                # Метод 2: fallback на download_to_drive() (последняя попытка)
                 if not download_success:
                     try:
                         logger.info(f"📥 Пробую скачать через download_to_drive()...")
