@@ -2036,12 +2036,19 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Скачиваем файл
             try:
                 logger.info(f"📥 Скачиваю файл: file_id={document.file_id}, file_name={file_name}")
+                logger.info(f"🔍 Используется {'локальный' if TELEGRAM_LOCAL_API_URL else 'стандартный'} Bot API")
                 
-                # Получаем объект File через стандартный метод библиотеки
-                # Библиотека сама использует правильный base_url из Application
-                file = await document.get_file()
+                # Получаем объект File через context.bot.get_file() (как в _process_video_file)
+                # Это гарантирует, что используется правильный base_url из Application
+                file = await context.bot.get_file(document.file_id)
                 if not file:
                     raise Exception("Не удалось получить информацию о файле")
+                
+                # Логируем информацию о файле для диагностики
+                if hasattr(file, 'file_path') and file.file_path:
+                    logger.info(f"📂 file.file_path: {file.file_path}")
+                if hasattr(file, 'file_size'):
+                    logger.info(f"📊 file.file_size: {file.file_size} байт")
                 
                 # Создаем папку downloads если её нет
                 os.makedirs("downloads", exist_ok=True)
@@ -2053,17 +2060,35 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Библиотека сама сформирует правильный URL к локальному Bot API (если настроен)
                 # или к официальному API (если локальный не настроен)
                 try:
+                    logger.info(f"⬇️ Начинаю скачивание через download_to_drive()...")
                     await file.download_to_drive(file_path)
+                    logger.info(f"✅ download_to_drive() успешно завершен")
                 except Exception as download_error:
                     # Fallback: пробуем download_as_bytearray()
-                    logger.warning(f"⚠️ download_to_drive() не сработал: {download_error}, пробую download_as_bytearray()")
+                    error_msg = str(download_error)
+                    logger.warning(f"⚠️ download_to_drive() не сработал: {error_msg}, пробую download_as_bytearray()")
                     try:
+                        logger.info(f"⬇️ Пробую скачать через download_as_bytearray()...")
                         file_bytes = await file.download_as_bytearray()
                         with open(file_path, 'wb') as f:
                             f.write(file_bytes)
+                        logger.info(f"✅ download_as_bytearray() успешно завершен, размер: {len(file_bytes)} байт")
                     except Exception as bytearray_error:
-                        logger.error(f"❌ download_as_bytearray() также не сработал: {bytearray_error}")
-                        raise Exception(f"Не удалось скачать файл. Ошибка: {bytearray_error}")
+                        error_msg_bytearray = str(bytearray_error)
+                        logger.error(f"❌ download_as_bytearray() также не сработал: {error_msg_bytearray}")
+                        
+                        # Если используется локальный Bot API и файл не найден, возможно файл еще не скачан
+                        if TELEGRAM_LOCAL_API_URL and ("Not Found" in error_msg_bytearray or "404" in error_msg_bytearray):
+                            logger.error(f"❌ Локальный Bot API не нашел файл. Возможные причины:")
+                            logger.error(f"   1. Файл еще не скачан локальным сервером")
+                            logger.error(f"   2. Файл слишком старый и уже недоступен")
+                            logger.error(f"   3. Проблема с настройкой локального Bot API")
+                            raise Exception(
+                                f"Локальный Bot API не может найти файл. "
+                                f"Попробуйте отправить файл еще раз или проверьте настройки локального Bot API. "
+                                f"Ошибка: {error_msg_bytearray}"
+                            )
+                        raise Exception(f"Не удалось скачать файл. Ошибка: {error_msg_bytearray}")
                 
                 if not os.path.exists(file_path):
                     raise Exception(f"Файл не был скачан: {file_path}")
