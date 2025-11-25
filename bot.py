@@ -2054,11 +2054,91 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     file_path_value = file.file_path
                     logger.info(f"📂 file.file_path: {file_path_value}")
                 
-                # Скачиваем файл через стандартный метод библиотеки
-                # Библиотека автоматически использует правильный base_file_url из Application
-                logger.info(f"⬇️ Скачиваю файл через download_as_bytearray()...")
-                data = await file.download_as_bytearray()
-                logger.info(f"✅ Файл скачан, размер: {len(data)} байт")
+                # Скачиваем файл как bytearray через стандартный метод библиотеки
+                data = None
+                try:
+                    logger.info(f"⬇️ Скачиваю файл через download_as_bytearray()...")
+                    data = await file.download_as_bytearray()
+                    logger.info(f"✅ Файл скачан через download_as_bytearray(), размер: {len(data)} байт")
+                except Exception as download_error:
+                    error_msg = str(download_error)
+                    logger.warning(f"⚠️ download_as_bytearray() не сработал: {error_msg}")
+                    
+                    # Fallback: пробуем скачать напрямую через HTTP
+                    if file_path_value:
+                        # Если используется локальный Bot API, пробуем через него
+                        if TELEGRAM_LOCAL_API_URL:
+                            try:
+                                logger.info(f"⬇️ Пробую скачать через локальный Bot API...")
+                                
+                                # Извлекаем относительный путь из file_path
+                                # file_path может быть: "documents/file_2.txt" или "https://api.telegram.org/file/bot.../documents/file_2.txt"
+                                relative_path = file_path_value
+                                if '://' in relative_path:
+                                    # Если это полный URL, извлекаем путь после /file/bot{TOKEN}/
+                                    if '/file/bot' in relative_path:
+                                        parts = relative_path.split('/file/bot', 1)
+                                        if len(parts) > 1:
+                                            # Убираем токен и оставляем только путь
+                                            path_with_token = parts[1]
+                                            if '/' in path_with_token:
+                                                relative_path = path_with_token.split('/', 1)[1]
+                                
+                                # Формируем URL для локального Bot API
+                                local_base = TELEGRAM_LOCAL_API_URL.rstrip('/')
+                                bot_token = context.bot.token
+                                download_url = f"{local_base}/file/bot{bot_token}/{relative_path}"
+                                
+                                logger.info(f"🌐 Скачиваю через локальный Bot API: {download_url[:100]}...")
+                                
+                                async with httpx.AsyncClient(timeout=60.0) as client:
+                                    response = await client.get(download_url)
+                                    response.raise_for_status()
+                                    data = bytearray(response.content)
+                                
+                                logger.info(f"✅ Файл скачан через локальный Bot API, размер: {len(data)} байт")
+                            except Exception as local_error:
+                                logger.warning(f"⚠️ Скачивание через локальный Bot API не сработало: {local_error}")
+                                
+                                # Если локальный не сработал, пробуем официальный API
+                                if file_path_value.startswith('http'):
+                                    try:
+                                        logger.info(f"⬇️ Пробую скачать напрямую через официальный Telegram API...")
+                                        official_url = file_path_value
+                                        logger.info(f"🌐 URL: {official_url[:100]}...")
+                                        
+                                        async with httpx.AsyncClient(timeout=60.0) as client:
+                                            response = await client.get(official_url)
+                                            response.raise_for_status()
+                                            data = bytearray(response.content)
+                                        
+                                        logger.info(f"✅ Файл скачан через официальный API, размер: {len(data)} байт")
+                                    except Exception as official_error:
+                                        logger.error(f"❌ Скачивание через официальный API также не сработало: {official_error}")
+                                        raise Exception(f"Не удалось скачать файл. Ошибка: {error_msg}")
+                                else:
+                                    raise
+                        else:
+                            # Если не используется локальный API, пробуем официальный
+                            if file_path_value and file_path_value.startswith('http'):
+                                try:
+                                    logger.info(f"⬇️ Пробую скачать напрямую через официальный Telegram API...")
+                                    official_url = file_path_value
+                                    logger.info(f"🌐 URL: {official_url[:100]}...")
+                                    
+                                    async with httpx.AsyncClient(timeout=60.0) as client:
+                                        response = await client.get(official_url)
+                                        response.raise_for_status()
+                                        data = bytearray(response.content)
+                                    
+                                    logger.info(f"✅ Файл скачан через официальный API, размер: {len(data)} байт")
+                                except Exception as official_error:
+                                    logger.error(f"❌ Скачивание через официальный API также не сработало: {official_error}")
+                                    raise Exception(f"Не удалось скачать файл. Ошибка: {error_msg}")
+                            else:
+                                raise
+                    else:
+                        raise
                 
                 if not data or len(data) == 0:
                     raise Exception("Скачанный файл пуст")
@@ -2530,20 +2610,12 @@ def main():
             # Создаем request (БЕЗ base_url, он передается в builder)
             request = HTTPXRequest(**request_kwargs)
             
-            # Для локального Bot API нужны ДВА URL:
-            # 1. base_url - для API методов (getUpdates, sendMessage, etc.)
-            # 2. base_file_url - для скачивания файлов
-            # Формат: http://host:port/bot{TOKEN} и http://host:port/file/bot{TOKEN}
-            api_base_url = f"{base_url}/bot{TELEGRAM_BOT_TOKEN}"
-            file_base_url = f"{base_url}/file/bot{TELEGRAM_BOT_TOKEN}"
-            
-            logger.info(f" API base URL: {api_base_url[:50]}...")
-            logger.info(f" File base URL: {file_base_url[:50]}...")
-            
+            # Используем base_url в builder
+            # base_url должен быть: http://host:port/bot (БЕЗ токена!)
+            # Токен передается ТОЛЬКО через .token(), а НЕ в base_url
             application = Application.builder()\
                 .token(TELEGRAM_BOT_TOKEN)\
-                .base_url(api_base_url)\
-                .base_file_url(file_base_url)\
+                .base_url(base_url_with_bot)\
                 .request(request)\
                 .build()
         else:
