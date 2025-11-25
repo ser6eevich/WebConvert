@@ -68,6 +68,9 @@ VIDEO_WEBAPP_URL = os.getenv('VIDEO_WEBAPP_URL')  # Опционально
 # Путь к папке converted в webapp (для веб-доступа к сконвертированным видео)
 WEBAPP_CONVERTED_DIR = os.getenv('WEBAPP_CONVERTED_DIR', 'webapp/converted')  # Относительно корня проекта
 
+# Путь к папке texts в webapp (для веб-доступа к текстовым документам)
+WEBAPP_TEXTS_DIR = os.getenv('WEBAPP_TEXTS_DIR', 'webapp/texts')  # Относительно корня проекта
+
 # Отладочное логирование для проверки значений
 if TELEGRAM_LOCAL_API_URL:
     logger.info(f"DEBUG: TELEGRAM_LOCAL_API_URL из .env: '{TELEGRAM_LOCAL_API_URL}'")
@@ -2108,6 +2111,36 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=get_main_menu_keyboard()
                 )
                 return
+            
+            # Копируем файл в TEXTS_DIR для веб-доступа
+            if WEBAPP_TEXTS_DIR:
+                try:
+                    texts_dir = Path(WEBAPP_TEXTS_DIR)
+                    texts_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Используем оригинальное имя файла, если доступно, иначе file_id
+                    if file_name:
+                        # Очищаем имя файла от недопустимых символов
+                        safe_filename = "".join(c for c in file_name if c.isalnum() or c in (' ', '-', '_', '.')).strip()
+                        if not safe_filename:
+                            safe_filename = f"{document.file_id}{file_ext}"
+                    else:
+                        safe_filename = f"{document.file_id}{file_ext}"
+                    
+                    # Если файл с таким именем уже существует, добавляем суффикс
+                    texts_file_path = texts_dir / safe_filename
+                    counter = 1
+                    while texts_file_path.exists():
+                        name_part = texts_file_path.stem
+                        texts_file_path = texts_dir / f"{name_part}_{counter}{texts_file_path.suffix}"
+                        counter += 1
+                    
+                    # Копируем файл
+                    import shutil
+                    shutil.copy2(file_path, texts_file_path)
+                    logger.info(f"✅ Текстовый документ скопирован в веб-папку: {texts_file_path}")
+                except Exception as copy_error:
+                    logger.warning(f"⚠️ Не удалось скопировать документ в веб-папку: {copy_error}")
             
             # Читаем текст из файла
             try:

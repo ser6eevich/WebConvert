@@ -28,6 +28,7 @@ app = FastAPI(title="Video Upload WebApp")
 PUBLIC_BASE_URL = os.getenv('PUBLIC_BASE_URL', 'https://example.com')
 VIDEOS_DIR = Path(os.getenv('VIDEOS_DIR', 'videos'))
 CONVERTED_DIR = Path(os.getenv('CONVERTED_DIR', 'converted'))  # Папка для сконвертированных видео
+TEXTS_DIR = Path(os.getenv('TEXTS_DIR', 'texts'))  # Папка для текстовых документов
 PORT = int(os.getenv('WEBAPP_PORT', '8000'))
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')  # Токен бота для отправки уведомлений
 TELEGRAM_NOTIFY_CHAT_ID = os.getenv('TELEGRAM_NOTIFY_CHAT_ID', '')  # ID чата для уведомлений (опционально)
@@ -35,8 +36,10 @@ TELEGRAM_NOTIFY_CHAT_ID = os.getenv('TELEGRAM_NOTIFY_CHAT_ID', '')  # ID чат�
 # Создаем директории, если их нет
 VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
 CONVERTED_DIR.mkdir(parents=True, exist_ok=True)
+TEXTS_DIR.mkdir(parents=True, exist_ok=True)
 logger.info(f"Директория для загруженных видео: {VIDEOS_DIR.absolute()}")
 logger.info(f"Директория для сконвертированных видео: {CONVERTED_DIR.absolute()}")
+logger.info(f"Директория для текстовых документов: {TEXTS_DIR.absolute()}")
 
 # Разрешенные расширения видео файлов
 ALLOWED_EXTENSIONS = {'.mp4', '.mov', '.avi', '.webm', '.mkv', '.flv', '.wmv', '.m4v', '.3gp'}
@@ -393,6 +396,7 @@ async def upload_form():
             <div class="nav-links">
                 <a href="/files" class="nav-btn">Все файлы</a>
                 <a href="/converted" class="nav-btn">Сконвертированные</a>
+                <a href="/texts" class="nav-btn">Тексты</a>
             </div>
             <form id="uploadForm" enctype="multipart/form-data">
                 <div class="upload-area" id="uploadArea">
@@ -1103,6 +1107,7 @@ async def files_list():
             <div class="header-actions">
                 <a href="/upload" class="btn btn-primary">Загрузить видео</a>
                 <a href="/converted" class="btn">Сконвертированные</a>
+                <a href="/texts" class="btn">Тексты</a>
                 <button type="button" class="btn" onclick="loadVideosList()">Обновить</button>
             </div>
             
@@ -1629,6 +1634,8 @@ async def converted_list():
             <div class="header-actions">
                 <a href="/upload" class="btn btn-primary">Загрузить видео</a>
                 <a href="/files" class="btn">Все файлы</a>
+                <a href="/texts" class="btn">Тексты</a>
+                <a href="/files" class="btn">Все файлы</a>
                 <button type="button" class="btn" onclick="loadVideosList()">Обновить</button>
             </div>
             
@@ -1881,13 +1888,442 @@ async def converted_list():
     return HTMLResponse(content=html_template)
 
 
+@app.get("/texts", response_class=HTMLResponse)
+async def texts_list():
+    """
+    GET /texts - отображает HTML страницу со списком всех текстовых документов
+    """
+    html_template = """
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <title>Текстовые документы</title>
+        <script src="https://telegram.org/js/telegram-web-app.js"></script>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            :root {
+                --tg-theme-bg-color: #ffffff;
+                --tg-theme-text-color: #000000;
+                --tg-theme-hint-color: #999999;
+                --tg-theme-link-color: #3390ec;
+                --tg-theme-button-color: #3390ec;
+                --tg-theme-button-text-color: #ffffff;
+                --tg-theme-secondary-bg-color: #f1f1f1;
+            }
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                background: var(--tg-theme-bg-color, #ffffff);
+                color: var(--tg-theme-text-color, #000000);
+                padding: 16px;
+                min-height: 100vh;
+                line-height: 1.5;
+            }
+            .container {
+                max-width: 800px;
+                margin: 0 auto;
+            }
+            h1 {
+                margin-bottom: 24px;
+                color: var(--tg-theme-text-color, #000000);
+                font-size: 24px;
+                font-weight: 600;
+            }
+            .header-actions {
+                display: flex;
+                gap: 8px;
+                margin-bottom: 24px;
+                flex-wrap: wrap;
+            }
+            .btn {
+                padding: 10px 16px;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 500;
+                text-decoration: none;
+                display: inline-block;
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                color: var(--tg-theme-text-color, #000000);
+                transition: background-color 0.2s;
+            }
+            .btn:active {
+                background: #e0e0e0;
+            }
+            .btn-primary {
+                background: var(--tg-theme-button-color, #3390ec);
+                color: var(--tg-theme-button-text-color, #ffffff);
+                border-color: var(--tg-theme-button-color, #3390ec);
+            }
+            .btn-primary:active {
+                opacity: 0.8;
+            }
+            .message {
+                padding: 12px 16px;
+                border-radius: 8px;
+                margin-bottom: 16px;
+                display: none;
+                font-size: 14px;
+                border: 1px solid;
+            }
+            .message.show {
+                display: block;
+            }
+            .message.success {
+                background: #f0f9ff;
+                color: #0369a1;
+                border-color: #bae6fd;
+            }
+            .message.error {
+                background: #fef2f2;
+                color: #991b1b;
+                border-color: #fecaca;
+            }
+            .stats {
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                padding: 16px;
+                border-radius: 8px;
+                margin-bottom: 24px;
+                display: flex;
+                justify-content: space-around;
+                flex-wrap: wrap;
+                gap: 16px;
+                border: 1px solid #e0e0e0;
+            }
+            .stat-item {
+                text-align: center;
+            }
+            .stat-value {
+                font-size: 24px;
+                font-weight: 600;
+                color: var(--tg-theme-text-color, #000000);
+            }
+            .stat-label {
+                font-size: 12px;
+                color: var(--tg-theme-hint-color, #999999);
+                margin-top: 4px;
+            }
+            .text-item {
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                border-radius: 8px;
+                padding: 16px;
+                margin-bottom: 12px;
+                border: 1px solid #e0e0e0;
+            }
+            .text-item-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-bottom: 8px;
+            }
+            .text-item-name {
+                font-weight: 500;
+                color: var(--tg-theme-text-color, #000000);
+                word-break: break-word;
+                flex: 1;
+                font-size: 15px;
+                min-width: 0;
+            }
+            .text-item-size {
+                color: var(--tg-theme-hint-color, #999999);
+                font-size: 13px;
+                white-space: nowrap;
+            }
+            .text-item-date {
+                font-size: 12px;
+                color: var(--tg-theme-hint-color, #999999);
+                margin-bottom: 12px;
+            }
+            .text-item-actions {
+                display: flex;
+                gap: 8px;
+            }
+            .text-item-btn {
+                flex: 1;
+                padding: 10px 16px;
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
+                font-size: 14px;
+                font-weight: 500;
+                cursor: pointer;
+                background: #ffffff;
+                color: var(--tg-theme-text-color, #000000);
+                transition: background-color 0.2s;
+            }
+            .text-item-btn:active {
+                background: #f0f0f0;
+            }
+            .btn-download {
+                background: var(--tg-theme-button-color, #3390ec);
+                color: var(--tg-theme-button-text-color, #ffffff);
+                border-color: var(--tg-theme-button-color, #3390ec);
+            }
+            .btn-download:active {
+                opacity: 0.8;
+            }
+            .btn-delete {
+                background: #ffffff;
+                color: #dc2626;
+                border-color: #dc2626;
+            }
+            .btn-delete:active {
+                background: #fef2f2;
+            }
+            .loading {
+                text-align: center;
+                padding: 40px;
+                color: var(--tg-theme-hint-color, #999999);
+            }
+            .empty-list {
+                text-align: center;
+                padding: 40px;
+                color: var(--tg-theme-hint-color, #999999);
+            }
+            .modal-overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 1000;
+                align-items: center;
+                justify-content: center;
+            }
+            .modal-overlay.show {
+                display: flex;
+            }
+            .modal {
+                background: var(--tg-theme-bg-color, #ffffff);
+                border-radius: 12px;
+                padding: 24px;
+                max-width: 90%;
+                width: 400px;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            }
+            .modal-title {
+                font-size: 18px;
+                font-weight: 600;
+                margin-bottom: 12px;
+                color: var(--tg-theme-text-color, #000000);
+            }
+            .modal-text {
+                font-size: 14px;
+                color: var(--tg-theme-text-color, #000000);
+                margin-bottom: 20px;
+                line-height: 1.5;
+            }
+            .modal-actions {
+                display: flex;
+                gap: 12px;
+            }
+            .modal-btn {
+                flex: 1;
+                padding: 12px;
+                border: none;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: 500;
+                cursor: pointer;
+                transition: opacity 0.2s;
+            }
+            .modal-btn-cancel {
+                background: var(--tg-theme-secondary-bg-color, #f5f5f5);
+                color: var(--tg-theme-text-color, #000000);
+            }
+            .modal-btn-confirm {
+                background: #dc2626;
+                color: #ffffff;
+            }
+            .modal-btn:active {
+                opacity: 0.8;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>📄 Текстовые документы</h1>
+            <div class="header-actions">
+                <a href="/upload" class="btn">Загрузка</a>
+                <a href="/files" class="btn">Все файлы</a>
+                <a href="/converted" class="btn">Сконвертированные</a>
+            </div>
+            <div class="message" id="message"></div>
+            <div class="stats" id="stats">
+                <div class="stat-item">
+                    <div class="stat-value" id="totalCount">0</div>
+                    <div class="stat-label">Всего документов</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="totalSize">0 KB</div>
+                    <div class="stat-label">Общий размер</div>
+                </div>
+            </div>
+            <div id="textsList"></div>
+        </div>
+
+        <div class="modal-overlay" id="deleteModal" onclick="if(event.target === this) closeDeleteModal()">
+            <div class="modal">
+                <div class="modal-title">Удалить документ?</div>
+                <div class="modal-text">
+                    Вы уверены, что хотите удалить документ "<span id="modalFilename"></span>"? Это действие нельзя отменить.
+                </div>
+                <div class="modal-actions">
+                    <button class="modal-btn modal-btn-cancel" onclick="closeDeleteModal()">Отмена</button>
+                    <button class="modal-btn modal-btn-confirm" onclick="confirmDelete()">Удалить</button>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            const tg = window.Telegram.WebApp;
+            tg.ready();
+            tg.expand();
+
+            let texts = [];
+            let deleteFilename = null;
+
+            async function loadTexts() {
+                const listDiv = document.getElementById('textsList');
+                listDiv.innerHTML = '<div class="loading">Загрузка...</div>';
+
+                try {
+                    const response = await fetch('/api/texts');
+                    const data = await response.json();
+                    texts = data.texts || [];
+
+                    updateStats();
+                    renderTexts();
+                } catch (error) {
+                    listDiv.innerHTML = '<div class="empty-list">Ошибка при загрузке документов</div>';
+                    showMessage('Ошибка при загрузке документов', 'error');
+                }
+            }
+
+            function updateStats() {
+                const totalCount = texts.length;
+                const totalSize = texts.reduce((sum, text) => sum + text.size, 0);
+                const totalSizeKB = (totalSize / 1024).toFixed(2);
+
+                document.getElementById('totalCount').textContent = totalCount;
+                document.getElementById('totalSize').textContent = totalSizeKB + ' KB';
+            }
+
+            function renderTexts() {
+                const listDiv = document.getElementById('textsList');
+
+                if (texts.length === 0) {
+                    listDiv.innerHTML = '<div class="empty-list">Нет текстовых документов</div>';
+                    return;
+                }
+
+                listDiv.innerHTML = texts.map(text => {
+                    const date = new Date(text.created_at);
+                    const dateStr = date.toLocaleDateString('ru-RU', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+
+                    return `
+                        <div class="text-item">
+                            <div class="text-item-header">
+                                <div class="text-item-name">${escapeHtml(text.filename)}</div>
+                                <div class="text-item-size">${text.size_kb} KB</div>
+                            </div>
+                            <div class="text-item-date">${dateStr}</div>
+                            <div class="text-item-actions">
+                                <button class="text-item-btn btn-download" onclick="downloadText('${escapeHtml(text.filename)}')">
+                                    Скачать
+                                </button>
+                                <button class="text-item-btn btn-delete" onclick="openDeleteModal('${escapeHtml(text.filename)}')">
+                                    Удалить
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            function escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            function downloadText(filename) {
+                window.open(`/texts/${encodeURIComponent(filename)}`, '_blank');
+            }
+
+            function openDeleteModal(filename) {
+                deleteFilename = filename;
+                document.getElementById('modalFilename').textContent = filename;
+                document.getElementById('deleteModal').classList.add('show');
+            }
+
+            function closeDeleteModal() {
+                deleteFilename = null;
+                document.getElementById('deleteModal').classList.remove('show');
+            }
+
+            async function confirmDelete() {
+                if (!deleteFilename) return;
+
+                try {
+                    const response = await fetch(`/api/texts/${encodeURIComponent(deleteFilename)}`, {
+                        method: 'DELETE'
+                    });
+
+                    const data = await response.json();
+
+                    if (response.ok) {
+                        showMessage('Документ успешно удален', 'success');
+                        closeDeleteModal();
+                        await loadTexts();
+                    } else {
+                        showMessage(data.detail || 'Ошибка при удалении документа', 'error');
+                    }
+                } catch (error) {
+                    showMessage('Ошибка при удалении документа', 'error');
+                }
+            }
+
+            function showMessage(text, type) {
+                const messageDiv = document.getElementById('message');
+                messageDiv.textContent = text;
+                messageDiv.className = `message show ${type}`;
+                setTimeout(() => {
+                    messageDiv.classList.remove('show');
+                }, 3000);
+            }
+
+            loadTexts();
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_template)
+
+
 @app.get("/health")
 async def health_check():
     """Проверка здоровья сервера"""
     return {
         "status": "ok",
         "videos_dir": str(VIDEOS_DIR.absolute()),
-        "converted_dir": str(CONVERTED_DIR.absolute())
+        "converted_dir": str(CONVERTED_DIR.absolute()),
+        "texts_dir": str(TEXTS_DIR.absolute())
     }
 
 
@@ -2110,6 +2546,168 @@ async def delete_video(filename: str):
     except Exception as e:
         logger.error(f"Ошибка при удалении видео: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Ошибка при удалении видео: {str(e)}")
+
+
+# Разрешенные расширения текстовых файлов
+TEXT_EXTENSIONS = {'.txt', '.doc', '.docx', '.md', '.rtf'}
+
+
+def is_text_file(filename: str) -> bool:
+    """Проверяет, является ли файл текстовым документом"""
+    ext = Path(filename).suffix.lower()
+    return ext in TEXT_EXTENSIONS
+
+
+@app.get("/api/texts")
+async def list_texts():
+    """
+    GET /api/texts - возвращает список всех текстовых документов
+    
+    Returns:
+        JSON с массивом текстовых документов (имя, размер, дата создания, URL)
+    """
+    try:
+        texts = []
+        
+        # Получаем абсолютный путь к директории
+        if TEXTS_DIR.is_absolute():
+            texts_path = TEXTS_DIR
+        else:
+            texts_path = Path.cwd() / TEXTS_DIR
+        
+        # Нормализуем путь
+        texts_path = texts_path.resolve()
+        
+        if not texts_path.exists():
+            logger.warning(f"Директория текстов не существует: {texts_path}")
+            return JSONResponse(content={"texts": []})
+        
+        # Проходим по всем файлам в директории
+        for file_path in texts_path.iterdir():
+            if file_path.is_file() and is_text_file(file_path.name):
+                try:
+                    file_size = file_path.stat().st_size
+                    file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+                    
+                    text_url = f"{PUBLIC_BASE_URL}/texts/{file_path.name}"
+                    
+                    texts.append({
+                        "filename": file_path.name,
+                        "size": file_size,
+                        "size_kb": round(file_size / 1024, 2),
+                        "created_at": file_mtime.isoformat(),
+                        "url": text_url
+                    })
+                except Exception as e:
+                    logger.warning(f"Ошибка при обработке файла {file_path.name}: {e}")
+                    continue
+        
+        # Сортируем по дате создания (новые первыми)
+        texts.sort(key=lambda x: x['created_at'], reverse=True)
+        
+        return JSONResponse(content={"texts": texts})
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении списка текстов: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка при получении списка текстов: {str(e)}")
+
+
+@app.delete("/api/texts/{filename}")
+async def delete_text(filename: str):
+    """
+    DELETE /api/texts/{filename} - удаляет текстовый документ
+    
+    Args:
+        filename: Имя файла для удаления
+        
+    Returns:
+        JSON с результатом удаления
+    """
+    try:
+        # Проверяем, что это текстовый файл
+        if not is_text_file(filename):
+            raise HTTPException(status_code=400, detail="Неподдерживаемый формат файла")
+        
+        # Получаем абсолютный путь к директории
+        if TEXTS_DIR.is_absolute():
+            texts_path = TEXTS_DIR
+        else:
+            texts_path = Path.cwd() / TEXTS_DIR
+        
+        texts_path = texts_path.resolve()
+        file_path = texts_path / filename
+        
+        # Нормализуем путь для безопасности
+        file_path = file_path.resolve()
+        
+        # Проверяем, что файл находится в правильной директории (безопасность)
+        if not str(file_path).startswith(str(texts_path)):
+            raise HTTPException(status_code=403, detail="Доступ запрещен")
+        
+        # Проверяем, что файл существует
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Файл не найден")
+        
+        # Удаляем файл
+        file_path.unlink()
+        
+        logger.info(f"✅ Текстовый документ удален: {filename}")
+        
+        return JSONResponse(content={
+            "status": "success",
+            "message": f"Документ {filename} успешно удален"
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при удалении текстового документа: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка при удалении документа: {str(e)}")
+
+
+@app.get("/texts/{filename}")
+async def get_text_file(filename: str):
+    """
+    GET /texts/{filename} - возвращает текстовый файл для скачивания
+    
+    Args:
+        filename: Имя файла
+        
+    Returns:
+        Файл для скачивания
+    """
+    try:
+        # Получаем абсолютный путь к директории
+        if TEXTS_DIR.is_absolute():
+            texts_path = TEXTS_DIR
+        else:
+            texts_path = Path.cwd() / TEXTS_DIR
+        
+        texts_path = texts_path.resolve()
+        file_path = texts_path / filename
+        
+        # Нормализуем путь для безопасности
+        file_path = file_path.resolve()
+        
+        # Проверяем, что файл находится в правильной директории (безопасность)
+        if not str(file_path).startswith(str(texts_path)):
+            raise HTTPException(status_code=403, detail="Доступ запрещен")
+        
+        # Проверяем, что файл существует
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Файл не найден")
+        
+        return FileResponse(
+            path=file_path,
+            filename=filename,
+            media_type='application/octet-stream'
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при получении текстового файла: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка при получении файла: {str(e)}")
 
 
 if __name__ == "__main__":
