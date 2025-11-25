@@ -2059,9 +2059,23 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         # Определяем, является ли file_path полным URL или относительным путем
                         file_path_value = file.file_path
                         if file_path_value.startswith('http://') or file_path_value.startswith('https://'):
-                            # Это уже полный URL - используем его напрямую
-                            download_url = file_path_value
-                            logger.info(f"🌐 file_path является полным URL, использую напрямую: {download_url[:100]}...")
+                            # Это уже полный URL - заменяем базовый URL на локальный, если используется локальный Bot API
+                            if TELEGRAM_LOCAL_API_URL:
+                                # Заменяем стандартный Telegram API URL на локальный
+                                local_base = TELEGRAM_LOCAL_API_URL.rstrip('/')
+                                # Извлекаем путь после /file/bot... из оригинального URL
+                                # Например: https://api.telegram.org/file/botTOKEN/path -> /file/botTOKEN/path
+                                if '/file/bot' in file_path_value:
+                                    path_after_file = file_path_value.split('/file/bot', 1)[1]
+                                    download_url = f"{local_base}/file/bot{path_after_file}"
+                                else:
+                                    # Если структура URL другая, просто заменяем домен
+                                    download_url = file_path_value.replace('https://api.telegram.org', local_base).replace('http://api.telegram.org', local_base)
+                                logger.info(f"🌐 Заменен базовый URL на локальный Bot API: {download_url[:100]}...")
+                            else:
+                                # Используем URL напрямую, если локальный API не настроен
+                                download_url = file_path_value
+                                logger.info(f"🌐 file_path является полным URL, использую напрямую: {download_url[:100]}...")
                         else:
                             # Это относительный путь - формируем правильный URL
                             if TELEGRAM_LOCAL_API_URL:
