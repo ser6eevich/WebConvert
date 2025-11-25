@@ -2499,13 +2499,14 @@ def main():
             logger.info(f"Настраиваю локальный Bot API: {base_url}")
             logger.info(f"Полный base_url (с токеном): {full_base_url[:50]}...")
             
-            # Создаем request с base_url
-            request_kwargs['base_url'] = full_base_url
+            # Создаем request БЕЗ base_url
             request = HTTPXRequest(**request_kwargs)
             
-            # Создаем Application с кастомным request
+            # Создаем Application с base_url и кастомным request
+            # base_url передается через метод .base_url() билдера
             application = Application.builder()\
                 .token(TELEGRAM_BOT_TOKEN)\
+                .base_url(full_base_url)\
                 .request(request)\
                 .build()
         else:
